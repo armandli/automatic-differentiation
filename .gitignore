@@ -52,6 +52,9 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
+# ...but keep our hand-written top-level Makefile (the CMake wrapper)
+!/Makefile
+
 # Temporary files
 *.tmp
 *.log
