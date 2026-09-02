@@ -13,10 +13,6 @@ namespace autodiff {
 
 namespace s = std;
 
-// derivative<IDX>(f, x0, x1, ...) evaluates d f / d x_IDX at the given point.
-// IDX defaults to 0, so the single-variable case reads derivative(f, x).
-// f must be callable with DualNumber<T> arguments; a generic lambda
-// [](auto...){ ... } is the usual form and may use autodiff::sin / exp / pow.
 template <s::size_t IDX = 0, typename F, typename A, typename... As>
 constexpr A derivative(F func, A arg0, As... args){
   static_assert(IDX <= sizeof...(As), "IDX is past the end of f's argument list");
@@ -28,7 +24,6 @@ constexpr A derivative(F func, A arg0, As... args){
   }(s::make_index_sequence<1 + sizeof...(As)>{});
 }
 
-// gradient(f, x0, x1, ...) returns { d f / d x0, d f / d x1, ... }.
 template <typename F, typename A, typename... As>
 constexpr s::array<A, 1 + sizeof...(As)> gradient(F func, A arg0, As... args){
   return [&]<s::size_t... I>(s::index_sequence<I...>){
@@ -36,11 +31,6 @@ constexpr s::array<A, 1 + sizeof...(As)> gradient(F func, A arg0, As... args){
   }(s::make_index_sequence<1 + sizeof...(As)>{});
 }
 
-// check_derivative<IDX>(f, suspect, x0, x1, ...) reports whether suspect matches
-// a central finite-difference estimate of d f / d x_IDX. The finite-difference
-// evaluation runs through DualNumber<A> with zero dual parts, so any f usable
-// with derivative() works here too. Tolerances are overridable as
-// check_derivative<IDX, H, RERR, AERR>.
 template <s::size_t IDX, double H = 1e-6, double RERR = 1e-5, double AERR = 1e-8, typename F, typename A, typename... As>
 constexpr bool check_derivative(F func, A suspect, A arg0, As... args){
   static_assert(IDX <= sizeof...(As), "IDX is past the end of f's argument list");
