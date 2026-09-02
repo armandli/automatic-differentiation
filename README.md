@@ -10,7 +10,7 @@ numbers (`ad::dual<T>`), with the usual arithmetic operators and a handful of
 elementary functions (`sin`, `cos`, `exp`, `log`, `sqrt`, `pow`, ...).
 
 ```cpp
-#include <autodiff/autodiff.hpp>
+#include <forward_ad.h>
 #include <print>
 
 int main() {
@@ -24,7 +24,7 @@ int main() {
 
 | Path    | Contents                                                        |
 | ------- | -------------------------------------------------------------- |
-| `src/`  | the library. All source lives here; headers are under `src/autodiff/` and included as `<autodiff/...>`. Header-only for now, but if any `.cpp` shows up here the build turns it into a static `libautodiff.a` automatically. |
+| `src/`  | the library. All source lives here; headers are under `src/autodiff/` and included bare, e.g. `<dual_number.h>` (that directory is the include root). Header-only for now, but if any `.cpp` shows up here the build turns it into a static `libautodiff.a` automatically. |
 | `test/` | GoogleTest unit tests. Every `*.cpp` here becomes its own test executable. |
 | `build/`| out-of-source build tree (git-ignored). All built executables land directly in here. |
 
@@ -33,6 +33,11 @@ int main() {
 Requires **CMake ≥ 3.25**, a **C++26** compiler, and (optionally) **Ninja**.
 GoogleTest is downloaded automatically at configure time via CMake's
 `FetchContent`.
+
+An optional **MLX** backend (Apple's array framework) is picked up automatically
+when MLX is installed — `brew install mlx`, or `pip install mlx` and then
+configure with `-DCMAKE_PREFIX_PATH=$(python3 -m mlx --cmake-dir)`. It is not
+built from source; see `AUTODIFF_WITH_MLX` below.
 
 Everything goes through the `Makefile`, which just memorizes the CMake commands:
 
@@ -50,6 +55,7 @@ Knobs (override on the command line):
 ```sh
 make BUILD_TYPE=Release          # default: Debug
 make GENERATOR="Unix Makefiles"  # default: Ninja if available
+make MLX=ON                      # default: AUTO (also: OFF)
 make -j
 ```
 
@@ -67,6 +73,7 @@ ctest --test-dir build --output-on-failure
 | ------------------------------- | ------- | --------------------------------------------- |
 | `AUTODIFF_BUILD_TESTS`          | `ON`    | build the `test/` suite                       |
 | `AUTODIFF_WARNINGS_AS_ERRORS`   | `OFF`   | add `-Werror` to first-party targets          |
+| `AUTODIFF_WITH_MLX`             | `AUTO`  | MLX backend: `AUTO` (on if found), `ON` (required), `OFF` |
 | `AUTODIFF_USE_SYSTEM_GTEST`     | `OFF`   | use an installed GoogleTest instead of fetching |
 | `AUTODIFF_GTEST_TAG`            | `v1.18.0` | GoogleTest git tag to fetch                 |
 

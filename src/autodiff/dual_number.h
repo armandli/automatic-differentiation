@@ -12,8 +12,7 @@ namespace s = std;
 
 template <typename T>
 struct DualNumber {
-  static_assert(s::is_floating_point_v<T>,
-                "DualNumber<T> requires a floating-point T");
+  static_assert(s::is_floating_point_v<T>, "DualNumber<T> requires a floating-point T");
 
   constexpr DualNumber() noexcept : mReal(0.), mDual(0.) {}
   constexpr DualNumber(T real) noexcept : mReal(real), mDual(0.) {}

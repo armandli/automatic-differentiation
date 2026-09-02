@@ -12,12 +12,14 @@
 #     make help        # list all targets
 #
 #  Overridable knobs:  make BUILD_TYPE=Release   make GENERATOR="Unix Makefiles"
+#                      make MLX=ON   (AUTO by default: on when MLX is installed)
 # ===========================================================================
 
 BUILD_DIR  ?= build
 BUILD_TYPE ?= Debug
 GENERATOR  ?= $(shell command -v ninja >/dev/null 2>&1 && echo Ninja || echo "Unix Makefiles")
 JOBS       ?= $(shell (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+MLX        ?= AUTO
 
 CMAKE ?= cmake
 CTEST ?= ctest
@@ -26,7 +28,8 @@ CACHE := $(BUILD_DIR)/CMakeCache.txt
 
 CONFIGURE_FLAGS := -S . -B $(BUILD_DIR) -G "$(GENERATOR)" \
                    -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-                   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+                   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+                   -DAUTODIFF_WITH_MLX=$(MLX)
 
 .PHONY: all build configure reconfigure test clean distclean rebuild compdb help
 .DEFAULT_GOAL := all
@@ -85,3 +88,4 @@ help:
 	@echo "  BUILD_TYPE = $(BUILD_TYPE)"
 	@echo "  GENERATOR  = $(GENERATOR)"
 	@echo "  JOBS       = $(JOBS)"
+	@echo "  MLX        = $(MLX)"

@@ -1,4 +1,4 @@
-#include <autodiff/dual_number.h>
+#include <dual_number.h>
 
 #include <cmath>
 #include <compare>

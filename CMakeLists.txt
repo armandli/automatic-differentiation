@@ -43,6 +43,10 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 option(AUTODIFF_BUILD_TESTS "Build the unit test suite" ON)
 option(AUTODIFF_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
+set(AUTODIFF_WITH_MLX "AUTO" CACHE STRING
+  "MLX-backed backend: AUTO (enable if MLX is found), ON (required), or OFF")
+set_property(CACHE AUTODIFF_WITH_MLX PROPERTY STRINGS AUTO ON OFF)
+
 # ---------------------------------------------------------------------------
 #  A shared "how we want our own code compiled" target.
 #  Only applied to first-party targets, never to fetched dependencies.
@@ -60,6 +64,26 @@ else()
   if(AUTODIFF_WARNINGS_AS_ERRORS)
     target_compile_options(autodiff_warnings INTERFACE -Werror)
   endif()
+endif()
+
+# ---------------------------------------------------------------------------
+#  Optional dependencies
+#
+#  MLX (https://github.com/ml-explore/mlx) is Apple's array framework. It is
+#  consumed as an installed package -- `brew install mlx`, or `pip install mlx`
+#  then point CMake at it with
+#    -DCMAKE_PREFIX_PATH=$(python3 -m mlx --cmake-dir)
+#  The `mlx` imported target is promoted to GLOBAL so src/ and test/ can see it.
+# ---------------------------------------------------------------------------
+if(AUTODIFF_WITH_MLX STREQUAL "AUTO")
+  find_package(MLX CONFIG QUIET GLOBAL)
+elseif(AUTODIFF_WITH_MLX)
+  find_package(MLX CONFIG REQUIRED GLOBAL)
+endif()
+
+set(AUTODIFF_MLX_ENABLED FALSE)
+if(MLX_FOUND)
+  set(AUTODIFF_MLX_ENABLED TRUE)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -83,5 +107,10 @@ message(STATUS "  Build type ........... ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Generator ............ ${CMAKE_GENERATOR}")
 message(STATUS "  Build tests .......... ${AUTODIFF_BUILD_TESTS}")
 message(STATUS "  Warnings as errors ... ${AUTODIFF_WARNINGS_AS_ERRORS}")
+if(AUTODIFF_MLX_ENABLED)
+  message(STATUS "  MLX backend ......... ${AUTODIFF_MLX_ENABLED} (MLX ${MLX_VERSION}, Metal ${MLX_BUILD_METAL})")
+else()
+  message(STATUS "  MLX backend ......... ${AUTODIFF_MLX_ENABLED} (AUTODIFF_WITH_MLX=${AUTODIFF_WITH_MLX})")
+endif()
 message(STATUS "  Executable output .... ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "")
