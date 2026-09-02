@@ -119,6 +119,34 @@ struct Shape {
     return Shape(s::vector<int64_t>(s::begin(mDimensions) + 1, s::end(mDimensions)));
   }
 
+  // Insert a size-1 dimension at `axis`. Negative axis counts from the end of
+  // the new rank, so -1 appends.
+  constexpr Shape unsqueeze(int64_t axis) const {
+    const int64_t r = static_cast<int64_t>(mDimensions.size());
+    if (axis < 0) axis += r + 1;
+    assert(axis >= 0 and axis <= r);
+    s::vector<int64_t> out;
+    out.reserve(static_cast<s::size_t>(r + 1));
+    out.insert(out.end(), mDimensions.begin(),
+               mDimensions.begin() + static_cast<s::size_t>(axis));
+    out.push_back(1);
+    out.insert(out.end(),
+               mDimensions.begin() + static_cast<s::size_t>(axis),
+               mDimensions.end());
+    return Shape(s::move(out));
+  }
+
+  // Remove up to `n` size-1 dimensions, scanning left-to-right.
+  constexpr Shape squeeze(int n) const {
+    s::vector<int64_t> out;
+    out.reserve(mDimensions.size());
+    for (int64_t d : mDimensions) {
+      if (d == 1 and n > 0) { --n; continue; }
+      out.push_back(d);
+    }
+    return Shape(s::move(out));
+  }
+
   constexpr bool operator==(const Shape& o) const {
     return mDimensions == o.mDimensions;
   }
@@ -187,6 +215,14 @@ struct CArrayRef {
     return CArrayRef(resolve_reshape(shape, mShape.product()), mData, mOffset);
   }
 
+  CArrayRef unsqueeze(int64_t axis) const {
+    return CArrayRef(mShape.unsqueeze(axis), mData, mOffset);
+  }
+
+  CArrayRef squeeze(int n) const {
+    return CArrayRef(mShape.squeeze(n), mData, mOffset);
+  }
+
   // Select slice `i` of the leading axis (negative counts from the end).
   CArrayRef sub(int64_t i) const {
     assert(mShape.rank() >= 1);
@@ -242,6 +278,14 @@ struct CArrayCRef {
 
   CArrayCRef reshape(const Shape& shape) const {
     return CArrayCRef(resolve_reshape(shape, mShape.product()), mData, mOffset);
+  }
+
+  CArrayCRef unsqueeze(int64_t axis) const {
+    return CArrayCRef(mShape.unsqueeze(axis), mData, mOffset);
+  }
+
+  CArrayCRef squeeze(int n) const {
+    return CArrayCRef(mShape.squeeze(n), mData, mOffset);
   }
 
   CArrayCRef sub(int64_t i) const {
@@ -330,6 +374,20 @@ struct CArray {
   }
   CArrayCRef<T> reshape(const Shape& shape) const {
     return CArrayCRef<T>(resolve_reshape(shape, mShape.product()), mBuffer.get(), 0);
+  }
+
+  CArrayRef<T> unsqueeze(int64_t axis){
+    return CArrayRef<T>(mShape.unsqueeze(axis), mBuffer.get(), 0);
+  }
+  CArrayCRef<T> unsqueeze(int64_t axis) const {
+    return CArrayCRef<T>(mShape.unsqueeze(axis), mBuffer.get(), 0);
+  }
+
+  CArrayRef<T> squeeze(int n){
+    return CArrayRef<T>(mShape.squeeze(n), mBuffer.get(), 0);
+  }
+  CArrayCRef<T> squeeze(int n) const {
+    return CArrayCRef<T>(mShape.squeeze(n), mBuffer.get(), 0);
   }
 
   CArrayRef<T> sub(int64_t i){ return ref().sub(i); }

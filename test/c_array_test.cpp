@@ -156,6 +156,31 @@ TEST(Shape, UsableInConstantExpressions) {
   SUCCEED();
 }
 
+TEST(Shape, UnsqueezeInsertsAtFront) {
+  EXPECT_EQ((Shape{3, 4}).unsqueeze(0), (Shape{1, 3, 4}));
+}
+
+TEST(Shape, UnsqueezeInsertsAtMiddle) {
+  EXPECT_EQ((Shape{3, 4}).unsqueeze(1), (Shape{3, 1, 4}));
+}
+
+TEST(Shape, UnsqueezeInsertsAtBack) {
+  EXPECT_EQ((Shape{3, 4}).unsqueeze(-1), (Shape{3, 4, 1}));
+  EXPECT_EQ((Shape{3, 4}).unsqueeze(2),  (Shape{3, 4, 1}));
+}
+
+TEST(Shape, SqueezeRemovesUpToN) {
+  EXPECT_EQ((Shape{1, 3, 1, 4, 1}).squeeze(2), (Shape{3, 4, 1}));
+}
+
+TEST(Shape, SqueezeRemovesAllWhenNLarge) {
+  EXPECT_EQ((Shape{1, 3, 1, 4, 1}).squeeze(10), (Shape{3, 4}));
+}
+
+TEST(Shape, SqueezeZeroRemovesNothing) {
+  EXPECT_EQ((Shape{1, 3, 1}).squeeze(0), (Shape{1, 3, 1}));
+}
+
 // ---------------------------------------------------------------------------
 //  CArray: construction, access, ownership
 // ---------------------------------------------------------------------------
@@ -317,6 +342,39 @@ TEST(CArrayRef, CloneMaterializesOnlyTheViewSpan) {
 TEST(CArrayRef, ItemThroughRankZeroView) {
   CArray<double> a = coded_456();
   EXPECT_DOUBLE_EQ(a.sub(2).sub(3).sub(4).item(), (a[2, 3, 4]));
+}
+
+TEST(CArrayRef, UnsqueezeSharesStorageAndShapeCorrect) {
+  CArray<double> a = coded_456();  // shape {4,5,6}
+  CArrayRef<double> u = a.unsqueeze(0);
+
+  EXPECT_EQ(u.shape(), (Shape{1, 4, 5, 6}));
+  EXPECT_EQ(u.data(), a.data());
+
+  // Element access through the extra leading dimension
+  EXPECT_DOUBLE_EQ((u[0, 1, 2, 3]), (a[1, 2, 3]));
+
+  // Write through view, read back through original
+  u[0, 3, 4, 5] = 999.0;
+  EXPECT_DOUBLE_EQ((a[3, 4, 5]), 999.0);
+}
+
+TEST(CArrayRef, UnsqueezeAtMiddleAndBack) {
+  CArray<double> a(Shape{3, 4}, 0.0);
+  EXPECT_EQ(a.unsqueeze(1).shape(), (Shape{3, 1, 4}));
+  EXPECT_EQ(a.unsqueeze(-1).shape(), (Shape{3, 4, 1}));
+}
+
+TEST(CArrayRef, SqueezeSharesStorageAndShapeCorrect) {
+  CArray<double> a(Shape{1, 4, 1, 5}, 0.0);
+
+  CArrayRef<double> s1 = a.squeeze(1);
+  EXPECT_EQ(s1.shape(), (Shape{4, 1, 5}));
+  EXPECT_EQ(s1.data(), a.data());
+
+  CArrayRef<double> s2 = a.squeeze(2);
+  EXPECT_EQ(s2.shape(), (Shape{4, 5}));
+  EXPECT_EQ(s2.data(), a.data());
 }
 
 // ---------------------------------------------------------------------------
