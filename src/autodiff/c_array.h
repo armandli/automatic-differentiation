@@ -266,6 +266,9 @@ private:
 template <typename T>
 struct CArray {
   CArray() noexcept: mShape(), mBuffer(nullptr) {}
+  explicit CArray(T val): mShape({1}), mBuffer(s::make_unique_for_overwrite<T[]>(1U)) {
+    s::fill_n(mBuffer.get(), 1U, val);
+  }
   explicit CArray(const Shape& shape, T init_val = T{})
     : mShape(shape),
       mBuffer(s::make_unique_for_overwrite<T[]>(static_cast<s::size_t>(shape.product()))) {
