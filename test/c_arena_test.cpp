@@ -8,6 +8,14 @@
 namespace {
 
 using autodiff::CArena;
+using autodiff::NodeBase;
+using autodiff::NodeKind;
+
+// A minimal concrete NodeBase — this translation unit has no Node<T> types.
+struct Dummy : NodeBase {
+  int v;
+  explicit Dummy(int v) : NodeBase(NodeKind::Operation), v(v) {}
+};
 
 TEST(CArena, AllocateReturnsDistinctNonNull) {
   CArena<double> arena;
@@ -101,6 +109,46 @@ TEST(CArena, IntTypeParameterWorks) {
   for (int64_t i = 0; i < 4; ++i)
     EXPECT_EQ(p[i], -1);
   EXPECT_EQ(arena.carray_count(), 1);
+}
+
+TEST(CArena, NegCounterStartsAtZero) {
+  CArena<double> arena;
+  EXPECT_EQ(arena.onode_neg_count(), 0);
+  arena.note_onode_neg();
+  EXPECT_EQ(arena.onode_neg_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+//  Node ownership
+// ---------------------------------------------------------------------------
+
+TEST(CArena, AdoptOwnsNodeAndBumpsCount) {
+  CArena<double> arena;
+  EXPECT_EQ(arena.node_count(), 0);
+  Dummy& d = arena.adopt<Dummy>(42);
+  EXPECT_EQ(d.v, 42);
+  EXPECT_EQ(arena.node_count(), 1);
+  EXPECT_EQ(&arena.node_at(0), static_cast<NodeBase*>(&d));
+  EXPECT_EQ(arena.node_at(0).mKind, NodeKind::Operation);
+}
+
+TEST(CArena, AdoptReferencesStayStableAcrossReallocation) {
+  CArena<double> arena;
+  Dummy& first = arena.adopt<Dummy>(0);
+  for (int i = 1; i < 128; ++i) arena.adopt<Dummy>(i);
+  EXPECT_EQ(first.v, 0);                       // not dangling after vector growth
+  EXPECT_EQ(arena.node_count(), 128);
+  EXPECT_EQ(&arena.node_at(0), static_cast<NodeBase*>(&first));
+}
+
+TEST(CArena, PromotedLeafRoundTrips) {
+  CArena<double> arena;
+  double* key = arena.allocate(1);
+  EXPECT_EQ(arena.promoted_leaf(key), nullptr);
+  Dummy& d = arena.adopt<Dummy>(7);
+  arena.register_leaf(key, &d);
+  EXPECT_EQ(arena.promoted_leaf(key), static_cast<NodeBase*>(&d));
+  EXPECT_EQ(arena.promoted_leaf(nullptr), nullptr);
 }
 
 } // namespace

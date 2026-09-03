@@ -479,4 +479,55 @@ TEST(CArray, EndToEndReshapeAndReduce) {
   EXPECT_DOUBLE_EQ(sum, expected);
 }
 
+// ---------------------------------------------------------------------------
+//  requires_grad
+// ---------------------------------------------------------------------------
+
+TEST(RequiresGrad, ValueTypeAlias) {
+  static_assert(std::is_same_v<CArray<double>::value_type, double>);
+  static_assert(std::is_same_v<CArray<int>::value_type, int>);
+  SUCCEED();
+}
+
+TEST(RequiresGrad, DefaultsFalse) {
+  CArena<double> arena;
+  CArray<double> a(arena, Shape{3}, 1.0);
+  EXPECT_FALSE(a.requires_grad());
+}
+
+TEST(RequiresGrad, SetterAndCtorParam) {
+  CArena<double> arena;
+  CArray<double> a(arena, Shape{3}, 1.0);
+  a.set_requires_grad();
+  EXPECT_TRUE(a.requires_grad());
+  a.set_requires_grad(false);
+  EXPECT_FALSE(a.requires_grad());
+
+  CArray<double> b(arena, Shape{3}, 1.0, /*requires_grad=*/true);
+  EXPECT_TRUE(b.requires_grad());
+  CArray<double> c(arena, 2.0, /*requires_grad=*/true);
+  EXPECT_TRUE(c.requires_grad());
+}
+
+TEST(RequiresGrad, SurvivesShallowCopyAndClone) {
+  CArena<double> arena;
+  CArray<double> a(arena, Shape{3}, 1.0, true);
+  CArray<double> copy = a;
+  EXPECT_TRUE(copy.requires_grad());
+  CArray<double> cloned = a.clone();
+  EXPECT_TRUE(cloned.requires_grad());
+}
+
+TEST(RequiresGrad, PropagatesThroughViews) {
+  CArena<double> arena;
+  CArray<double> a(arena, Shape{2, 3}, 0.0, true);
+  EXPECT_TRUE(a.reshape(Shape{6}).requires_grad());
+  EXPECT_TRUE(a.sub(0).requires_grad());
+  EXPECT_TRUE(a.unsqueeze(0).requires_grad());
+  EXPECT_TRUE(a.squeeze(0).requires_grad());
+
+  CArray<double> b(arena, Shape{2, 3}, 0.0);   // default false
+  EXPECT_FALSE(b.reshape(Shape{6}).requires_grad());
+}
+
 } // namespace

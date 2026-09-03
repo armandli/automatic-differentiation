@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace autodiff {
@@ -12,12 +14,34 @@ namespace autodiff {
 namespace s = std;
 
 // ---------------------------------------------------------------------------
+//  NodeKind / NodeBase: the non-template identity+lifetime base for every
+//  graph node (Node<T> and its subclasses in c_graph.h). Nodes are heap
+//  objects owned by a CArena<T> (adopt()), never copied, and destroyed
+//  polymorphically through this base when the arena dies. NodeKind lets a
+//  later reverse pass discriminate leaves from operations without an RTTI
+//  round-trip.
+// ---------------------------------------------------------------------------
+enum class NodeKind { Variable, Constant, Operation };
+
+struct NodeBase {
+  NodeKind mKind;
+
+  explicit NodeBase(NodeKind k) noexcept : mKind(k) {}
+  NodeBase(const NodeBase&) = delete;
+  NodeBase& operator=(const NodeBase&) = delete;
+  virtual ~NodeBase() = default;
+
+  virtual void zero_grad() {}   // Node<T> overrides
+};
+
+// ---------------------------------------------------------------------------
 //  CArena<T>: the sole owner of every numeric T-buffer used by CArray<T> and
-//  the graph nodes built on it. allocate() carves a fresh block, records it,
-//  and returns a non-owning pointer valid until ~CArena, which frees every
-//  block at once. CArray<T> and every node are stack value objects holding
-//  non-owning pointers into these blocks; the arena, declared first in a
-//  scope, must outlive them.
+//  of every graph node built on it. allocate() carves a fresh block, records
+//  it, and returns a non-owning pointer valid until ~CArena, which frees every
+//  block at once. adopt<N>() constructs a node on the heap, takes ownership,
+//  and returns a reference stable for the arena's life. CArray<T> is a stack
+//  value handle into these blocks; the arena, declared first in a scope, must
+//  outlive everything built on it.
 //
 //  The arena is pinned: CArray<T> keeps a CArena<T>* back-pointer, so a move
 //  of the arena would dangle every array — copy and move are deleted.
@@ -27,6 +51,10 @@ namespace s = std;
 //  arena per computation), so the counters are plain int64_t — the old
 //  graph_stats counters were std::atomic only because they were a single
 //  global shared across threads.
+//
+//  The node list (mNodes) grows for the arena's whole life — it is a tape, not
+//  a scratchpad. Reusing one arena across many forward passes (a training
+//  loop) grows it without bound; use a fresh arena per pass for now.
 // ---------------------------------------------------------------------------
 template <typename T>
 struct CArena {
@@ -49,11 +77,35 @@ struct CArena {
     return raw;
   }
 
+  // Construct a node of type N in place, own it, and return it. Exception
+  // safe: the owning handle exists before the vector push, so a failed
+  // reallocation frees the node instead of leaking it.
+  template <typename N, typename... Args>
+  N& adopt(Args&&... args) {
+    auto p = s::make_unique<N>(s::forward<Args>(args)...);
+    N& ref = *p;
+    mNodes.push_back(s::move(p));
+    return ref;
+  }
+
+  // Canonical leaf node a CArray buffer promoted to, or nullptr. Keyed by the
+  // buffer pointer, which CArena never frees mid-life, so the key stays valid.
+  NodeBase* promoted_leaf(const T* key) const {
+    auto it = mPromoted.find(key);
+    return it == mPromoted.end() ? nullptr : it->second;
+  }
+  void register_leaf(const T* key, NodeBase* node) { mPromoted.emplace(key, node); }
+
+  // The tape, in creation order (a valid topological order for a reverse pass).
+  int64_t   node_count()       const noexcept { return static_cast<int64_t>(mNodes.size()); }
+  NodeBase& node_at(int64_t i)  const { return *mNodes[static_cast<s::size_t>(i)]; }
+
   // Creation counters — one call per buffer-bearing object built on this arena.
   int64_t note_vnode()   noexcept { return mVnodeCount++; }
   int64_t note_cnode()   noexcept { return mCnodeCount++; }
   void note_onode_add()      noexcept { ++mOnodeAddCount; }
   void note_onode_sub()      noexcept { ++mOnodeSubCount; }
+  void note_onode_neg()      noexcept { ++mOnodeNegCount; }
   void note_onode_hadamard() noexcept { ++mOnodeHadamardCount; }
   void note_onode_dot()      noexcept { ++mOnodeDotCount; }
   void note_onode_div()      noexcept { ++mOnodeDivCount; }
@@ -71,6 +123,7 @@ struct CArena {
   int64_t cnode_count()          const noexcept { return mCnodeCount; }
   int64_t onode_add_count()      const noexcept { return mOnodeAddCount; }
   int64_t onode_sub_count()      const noexcept { return mOnodeSubCount; }
+  int64_t onode_neg_count()      const noexcept { return mOnodeNegCount; }
   int64_t onode_hadamard_count() const noexcept { return mOnodeHadamardCount; }
   int64_t onode_dot_count()      const noexcept { return mOnodeDotCount; }
   int64_t onode_div_count()      const noexcept { return mOnodeDivCount; }
@@ -84,12 +137,15 @@ struct CArena {
   int64_t onode_pow_count()      const noexcept { return mOnodePowCount; }
 
 private:
-  s::vector<s::unique_ptr<T[]>> mBuffers;
+  s::vector<s::unique_ptr<T[]>>         mBuffers;
+  s::vector<s::unique_ptr<NodeBase>>    mNodes;      // destroyed before mBuffers
+  s::unordered_map<const T*, NodeBase*> mPromoted;   // CArray buffer -> canonical leaf
   int64_t mCarrayCount        = 0;
   int64_t mVnodeCount         = 0;
   int64_t mCnodeCount         = 0;
   int64_t mOnodeAddCount      = 0;
   int64_t mOnodeSubCount      = 0;
+  int64_t mOnodeNegCount      = 0;
   int64_t mOnodeHadamardCount = 0;
   int64_t mOnodeDotCount      = 0;
   int64_t mOnodeDivCount      = 0;

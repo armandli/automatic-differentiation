@@ -183,18 +183,28 @@ inline Shape resolve_reshape(const Shape& request, int64_t total){
 //  so read-only intent is expressed by passing `const CArray<T>&` and using
 //  the const element accessors. A default-constructed CArray has no arena;
 //  clone() on one asserts.
+//
+//  requires_grad marks the array as a differentiable leaf: when it flows into a
+//  graph operator (c_graph.h) it promotes to a VNode; otherwise to a CNode. It
+//  is a plain flag carried by shallow copies and views; set it before the first
+//  graph use.
 // ---------------------------------------------------------------------------
 template <typename T>
 struct CArray {
+  using value_type = T;
+
   CArray() noexcept: mShape(), mData(nullptr), mArena(nullptr) {}
 
-  explicit CArray(CArena<T>& arena, T val)
-    : mShape({1}), mData(arena.allocate(1U, val)), mArena(&arena) {}
+  explicit CArray(CArena<T>& arena, T val, bool requires_grad = false)
+    : mShape({1}), mData(arena.allocate(1U, val)), mArena(&arena)
+    , mRequiresGrad(requires_grad) {}
 
-  explicit CArray(CArena<T>& arena, const Shape& shape, T init_val = T{})
+  explicit CArray(CArena<T>& arena, const Shape& shape, T init_val = T{},
+                  bool requires_grad = false)
     : mShape(shape)
     , mData(arena.allocate(static_cast<s::size_t>(shape.product()), init_val))
-    , mArena(&arena) {}
+    , mArena(&arena)
+    , mRequiresGrad(requires_grad) {}
 
   CArray(const CArray&) = default;             // shallow: aliases the same buffer
   CArray& operator=(const CArray&) = default;
@@ -212,11 +222,15 @@ struct CArray {
 
   CArena<T>* arena() const noexcept { return mArena; }
 
+  bool requires_grad() const noexcept { return mRequiresGrad; }
+  void set_requires_grad(bool b = true) noexcept { mRequiresGrad = b; }
+
   // The only deep copy: allocate a fresh block in the same arena.
   CArray clone() const {
     assert(mArena != nullptr);
     CArray out(*mArena, mShape);
     s::copy_n(mData, size(), out.mData);
+    out.mRequiresGrad = mRequiresGrad;
     return out;
   }
 
@@ -244,14 +258,15 @@ struct CArray {
   const T& item() const { assert(size() == 1); return mData[0]; }
 
   // Aliasing views: a fresh CArray<T> over this array's storage, no allocation.
+  // The requires_grad flag rides along (a view of a leaf is still leaf data).
   CArray reshape(const Shape& shape) const {
-    return CArray(resolve_reshape(shape, mShape.product()), mData, mArena);
+    return CArray(resolve_reshape(shape, mShape.product()), mData, mArena, mRequiresGrad);
   }
   CArray unsqueeze(int64_t axis) const {
-    return CArray(mShape.unsqueeze(axis), mData, mArena);
+    return CArray(mShape.unsqueeze(axis), mData, mArena, mRequiresGrad);
   }
   CArray squeeze(int n) const {
-    return CArray(mShape.squeeze(n), mData, mArena);
+    return CArray(mShape.squeeze(n), mData, mArena, mRequiresGrad);
   }
 
   // Select slice `i` of the leading axis (negative counts from the end).
@@ -263,17 +278,18 @@ struct CArray {
     const Shape child = mShape.subshape();
     return CArray(child,
       mData + static_cast<s::size_t>(i) * static_cast<s::size_t>(child.product()),
-      mArena);
+      mArena, mRequiresGrad);
   }
 
 private:
   // Aliasing-view constructor: shares base's storage, allocates nothing.
-  CArray(const Shape& shape, T* base, CArena<T>* arena) noexcept
-    : mShape(shape), mData(base), mArena(arena) {}
+  CArray(const Shape& shape, T* base, CArena<T>* arena, bool requires_grad) noexcept
+    : mShape(shape), mData(base), mArena(arena), mRequiresGrad(requires_grad) {}
 
   Shape      mShape;
-  T*         mData;   // non-owning; into a CArena<T> block
-  CArena<T>* mArena;  // non-owning; for clone() / further allocation
+  T*         mData;          // non-owning; into a CArena<T> block
+  CArena<T>* mArena;         // non-owning; for clone() / further allocation
+  bool       mRequiresGrad = false;
 };
 
 // Exact element-wise equality: same shape, same values in row-major order.
