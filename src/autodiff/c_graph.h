@@ -408,7 +408,9 @@ CArena<T>& pick_arena(const A& a, const B& b) {
 
 template <typename T>
 Node<T>& promote_scalar(CArena<T>& arena, T v) {
-  return arena.template adopt<CNode<T>>(arena, CArray<T>(arena, v));
+  // A numeric literal is always a constant, even when the arena's
+  // auto_requires_grad policy is on — pass the flag explicitly.
+  return arena.template adopt<CNode<T>>(arena, CArray<T>(arena, v, false));
 }
 
 template <typename T>

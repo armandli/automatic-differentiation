@@ -9,6 +9,7 @@
 #include <functional>
 #include <initializer_list>
 #include <numeric>
+#include <optional>
 #include <vector>
 
 #include <c_arena.h>
@@ -185,9 +186,11 @@ inline Shape resolve_reshape(const Shape& request, int64_t total){
 //  clone() on one asserts.
 //
 //  requires_grad marks the array as a differentiable leaf: when it flows into a
-//  graph operator (c_graph.h) it promotes to a VNode; otherwise to a CNode. It
-//  is a plain flag carried by shallow copies and views; set it before the first
-//  graph use.
+//  graph operator (c_graph.h) it promotes to a VNode; otherwise to a CNode. Each
+//  CArray takes its owning arena's auto_requires_grad() policy at construction
+//  (read once, then fixed); pass an explicit bool to the constructor, or call
+//  set_requires_grad() later, to override. Shallow copies and views carry the
+//  resolved flag.
 // ---------------------------------------------------------------------------
 template <typename T>
 struct CArray {
@@ -195,16 +198,16 @@ struct CArray {
 
   CArray() noexcept: mShape(), mData(nullptr), mArena(nullptr) {}
 
-  explicit CArray(CArena<T>& arena, T val, bool requires_grad = false)
+  explicit CArray(CArena<T>& arena, T val, s::optional<bool> requires_grad = s::nullopt)
     : mShape({1}), mData(arena.allocate(1U, val)), mArena(&arena)
-    , mRequiresGrad(requires_grad) {}
+    , mRequiresGrad(requires_grad.value_or(arena.auto_requires_grad())) {}
 
   explicit CArray(CArena<T>& arena, const Shape& shape, T init_val = T{},
-                  bool requires_grad = false)
+                  s::optional<bool> requires_grad = s::nullopt)
     : mShape(shape)
     , mData(arena.allocate(static_cast<s::size_t>(shape.product()), init_val))
     , mArena(&arena)
-    , mRequiresGrad(requires_grad) {}
+    , mRequiresGrad(requires_grad.value_or(arena.auto_requires_grad())) {}
 
   CArray(const CArray&) = default;             // shallow: aliases the same buffer
   CArray& operator=(const CArray&) = default;
@@ -228,9 +231,8 @@ struct CArray {
   // The only deep copy: allocate a fresh block in the same arena.
   CArray clone() const {
     assert(mArena != nullptr);
-    CArray out(*mArena, mShape);
+    CArray out(*mArena, mShape, T{}, mRequiresGrad);   // preserve this array's flag
     s::copy_n(mData, size(), out.mData);
-    out.mRequiresGrad = mRequiresGrad;
     return out;
   }
 

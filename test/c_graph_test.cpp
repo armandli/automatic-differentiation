@@ -643,6 +643,25 @@ TEST(Promotion, SameArrayAcrossStatementsMapsToOneNode) {
   EXPECT_EQ(arena.vnode_count(), 1);
 }
 
+TEST(Promotion, ArenaPolicyPromotesCArrayToVariable) {
+  CArena<double> arena;
+  arena.set_auto_requires_grad(true);
+  CArray<double> x(arena, Shape{3}, 2.0);       // no explicit flag
+  auto& n = x * x;
+  EXPECT_EQ(arena.vnode_count(), 1);
+  EXPECT_EQ(arena.cnode_count(), 0);
+  EXPECT_EQ(n.left()->mKind, autodiff::NodeKind::Variable);
+}
+
+TEST(Promotion, LiteralStaysConstantUnderArenaPolicy) {
+  CArena<double> arena;
+  arena.set_auto_requires_grad(true);
+  CArray<double> x(arena, Shape{3}, 1.0);
+  auto& n = x + 2.0;
+  EXPECT_EQ(n.left()->mKind, autodiff::NodeKind::Variable);    // x
+  EXPECT_EQ(n.right()->mKind, autodiff::NodeKind::Constant);   // the literal 2.0
+}
+
 TEST(Promotion, ScalarLiteralBecomesConstantScalar) {
   CArena<double> arena;
   CArray<double> x(arena, Shape{3}, 1.0);

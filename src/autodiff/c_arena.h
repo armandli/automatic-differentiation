@@ -96,6 +96,11 @@ struct CArena {
   }
   void register_leaf(const T* key, NodeBase* node) { mPromoted.emplace(key, node); }
 
+  // Default requires_grad for CArray<T>s allocated from this arena; each picks it
+  // up at construction unless it passes an explicit flag. Off by default.
+  void set_auto_requires_grad(bool b) noexcept { mAutoRequiresGrad = b; }
+  bool auto_requires_grad()     const noexcept { return mAutoRequiresGrad; }
+
   // The tape, in creation order (a valid topological order for a reverse pass).
   int64_t   node_count()       const noexcept { return static_cast<int64_t>(mNodes.size()); }
   NodeBase& node_at(int64_t i)  const { return *mNodes[static_cast<s::size_t>(i)]; }
@@ -146,6 +151,7 @@ private:
   s::vector<s::unique_ptr<T[]>>         mBuffers;
   s::vector<s::unique_ptr<NodeBase>>    mNodes;      // destroyed before mBuffers
   s::unordered_map<const T*, NodeBase*> mPromoted;   // CArray buffer -> canonical leaf
+  bool    mAutoRequiresGrad   = false;
   int64_t mCarrayCount        = 0;
   int64_t mVnodeCount         = 0;
   int64_t mCnodeCount         = 0;

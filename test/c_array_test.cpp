@@ -530,4 +530,33 @@ TEST(RequiresGrad, PropagatesThroughViews) {
   EXPECT_FALSE(b.reshape(Shape{6}).requires_grad());
 }
 
+TEST(RequiresGrad, InheritsArenaPolicy) {
+  CArena<double> arena;
+  arena.set_auto_requires_grad(true);
+  CArray<double> a(arena, Shape{3});
+  CArray<double> b(arena, 1.0);
+  EXPECT_TRUE(a.requires_grad());
+  EXPECT_TRUE(b.requires_grad());
+}
+
+TEST(RequiresGrad, CtorParamOverridesArenaPolicy) {
+  CArena<double> arena;
+  arena.set_auto_requires_grad(true);
+  CArray<double> a(arena, Shape{3}, 0.0, false);
+  EXPECT_FALSE(a.requires_grad());
+
+  arena.set_auto_requires_grad(false);
+  CArray<double> b(arena, Shape{3}, 0.0, true);
+  EXPECT_TRUE(b.requires_grad());
+}
+
+TEST(RequiresGrad, PolicyReadAtConstructionNotLater) {
+  CArena<double> arena;
+  CArray<double> a(arena, Shape{3});            // policy off at this point
+  arena.set_auto_requires_grad(true);           // ... flip it afterwards
+  EXPECT_FALSE(a.requires_grad());               // existing array is untouched
+  CArray<double> b(arena, Shape{3});            // new array sees the new policy
+  EXPECT_TRUE(b.requires_grad());
+}
+
 } // namespace

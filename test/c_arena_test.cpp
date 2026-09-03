@@ -131,6 +131,15 @@ TEST(CArena, ReductionCountersIncrementIndependently) {
   EXPECT_EQ(arena.onode_min_count(), 0);
 }
 
+TEST(CArena, AutoRequiresGradPolicy) {
+  CArena<double> arena;
+  EXPECT_FALSE(arena.auto_requires_grad());
+  arena.set_auto_requires_grad(true);
+  EXPECT_TRUE(arena.auto_requires_grad());
+  arena.set_auto_requires_grad(false);
+  EXPECT_FALSE(arena.auto_requires_grad());
+}
+
 // ---------------------------------------------------------------------------
 //  Node ownership
 // ---------------------------------------------------------------------------
