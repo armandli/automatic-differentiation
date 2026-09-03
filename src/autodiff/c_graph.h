@@ -9,16 +9,19 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace autodiff {
 
 namespace s = std;
 
-enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
+enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min,
+                Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
 //  Node<T>: base for all graph nodes.
@@ -108,20 +111,23 @@ struct CNode : Node<T> {
 
 // ---------------------------------------------------------------------------
 //  ONode<T>: operation node — holds the result, links to its input nodes.
-//  mRight is null for unary operations (Neg, Exp, Log, Sin, ...). Built by the
-//  graph_* factories into the operands' arena; the input nodes it points at
-//  are arena-owned too, so they outlive it.
+//  mRight is null for unary operations (Neg, Exp, Log, Sin, reductions, ...).
+//  mAxis is the reduced axis for Sum/Max/Min (a resolved non-negative index),
+//  or -1 for a full reduction and every non-reduction op. Built by the graph_*
+//  factories into the operands' arena; the input nodes it points at are
+//  arena-owned too, so they outlive it.
 // ---------------------------------------------------------------------------
 template <typename T>
 struct ONode : Node<T> {
   Op       mOp;
   Node<T>* mLeft;
   Node<T>* mRight;
+  int64_t  mAxis;
 
   ONode(CArena<T>& arena, Op op, CArray<T>&& result,
-        Node<T>* left, Node<T>* right = nullptr)
+        Node<T>* left, Node<T>* right = nullptr, int64_t axis = -1)
     : Node<T>(NodeKind::Operation, arena, s::move(result))
-    , mOp(op), mLeft(left), mRight(right)
+    , mOp(op), mLeft(left), mRight(right), mAxis(axis)
   {
     switch (op) {
       case Op::Add:      arena.note_onode_add();      break;
@@ -130,6 +136,9 @@ struct ONode : Node<T> {
       case Op::Hadamard: arena.note_onode_hadamard(); break;
       case Op::Dot:      arena.note_onode_dot();      break;
       case Op::Div:      arena.note_onode_div();      break;
+      case Op::Sum:      arena.note_onode_sum();      break;
+      case Op::Max:      arena.note_onode_max();      break;
+      case Op::Min:      arena.note_onode_min();      break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -146,6 +155,7 @@ struct ONode : Node<T> {
   Op       op()    const noexcept { return mOp; }
   Node<T>* left()  const noexcept { return mLeft; }
   Node<T>* right() const noexcept { return mRight; }
+  int64_t  axis()  const noexcept { return mAxis; }
 };
 
 // ---------------------------------------------------------------------------
@@ -218,6 +228,56 @@ ONode<T>& make_dot(CArena<T>& arena, Node<T>* a, Node<T>* b) {
   return arena.template adopt<ONode<T>>(arena, Op::Dot, s::move(result), a, b);
 }
 
+// Reduce `a` along one axis, or over every element when `axis` is absent. The
+// accumulator is seeded with the first element of each group and folded with
+// f(acc, x) over the rest, so one fold serves sum (plus), max, and min. Output
+// shape = input shape with `axis` removed; a full reduction — or removing the
+// last remaining axis — yields Shape{1}. The resolved axis is stored on the
+// ONode: a reverse pass broadcasts the Sum grad back along it, and routes the
+// Max/Min grad to each group's arg-extreme element (recomputed from mLeft).
+template <typename T, typename Fold>
+ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
+                      s::optional<int64_t> axis, Fold f) {
+  assert(a->size() >= 1);
+  const Shape& in = a->shape();
+  const int64_t rank = static_cast<int64_t>(in.rank());
+  const T* pin = a->data();
+
+  if (not axis) {
+    T acc = pin[0];
+    for (s::size_t i = 1, n = a->size(); i < n; ++i)
+      acc = f(acc, pin[i]);
+    CArray<T> result(arena, Shape{1});
+    result.data()[0] = acc;
+    return arena.template adopt<ONode<T>>(arena, op, s::move(result), a, nullptr, -1);
+  }
+
+  int64_t ax = *axis;
+  if (ax < 0) ax += rank;
+  assert(ax >= 0 and ax < rank);
+
+  int64_t outer = 1, inner = 1;
+  for (int64_t d = 0;      d < ax;   ++d) outer *= in[d];
+  for (int64_t d = ax + 1; d < rank; ++d) inner *= in[d];
+  const int64_t axlen = in[ax];
+
+  s::vector<int64_t> od;
+  for (int64_t d = 0; d < rank; ++d)
+    if (d != ax) od.push_back(in[d]);
+  if (od.empty()) od.push_back(1);
+  CArray<T> result(arena, Shape{s::move(od)});
+  T* pr = result.data();
+
+  for (int64_t o = 0; o < outer; ++o)
+    for (int64_t j = 0; j < inner; ++j){
+      T acc = pin[(o * axlen) * inner + j];
+      for (int64_t k = 1; k < axlen; ++k)
+        acc = f(acc, pin[(o * axlen + k) * inner + j]);
+      pr[o * inner + j] = acc;
+    }
+  return arena.template adopt<ONode<T>>(arena, op, s::move(result), a, nullptr, ax);
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -237,6 +297,25 @@ ONode<T>& graph_sub(Node<T>* a, Node<T>* b) {
 template <typename T>
 ONode<T>& graph_neg(Node<T>* a) {
   return detail::make_unary(*a->arena(), Op::Neg, a, [](T x){ return -x; });
+}
+
+// Reductions: axis absent -> reduce every element to Shape{1}; axis given (may be
+// negative) -> that axis is removed from the shape. See detail::make_reduce.
+template <typename T>
+ONode<T>& graph_sum(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_reduce(*a->arena(), Op::Sum, a, axis, s::plus<T>{});
+}
+
+template <typename T>
+ONode<T>& graph_max(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_reduce(*a->arena(), Op::Max, a, axis,
+                             [](T acc, T x){ return s::max(acc, x); });
+}
+
+template <typename T>
+ONode<T>& graph_min(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_reduce(*a->arena(), Op::Min, a, axis,
+                             [](T acc, T x){ return s::min(acc, x); });
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -435,6 +514,27 @@ auto& pow(A&& a, B&& b) {
   return graph_pow(&detail::to_node<T>(ar, s::forward<A>(a)),
                    &detail::to_node<T>(ar, s::forward<B>(b)));
 }
+
+// ---------------------------------------------------------------------------
+//  Reductions on a Node or CArray operand: sum(x) / max(x) / min(x) fold every
+//  element; sum(x, k) / max(x, k) / min(x, k) fold axis k (negative allowed).
+//  Resolved by ADL for graph operands — no clash with std::max/std::min (the
+//  1-arg call and the optional<int64_t> 2nd arg match no std overload); use
+//  graph_max / graph_min if `using namespace std;` is also in effect.
+// ---------------------------------------------------------------------------
+#define AUTODIFF_GRAPH_REDUCE(NAME, FN)                                           \
+  template <typename A>                                                           \
+    requires detail::is_graph_operand<A>                                          \
+  auto& NAME(A&& a, s::optional<int64_t> axis = s::nullopt) {                     \
+    using T = typename s::remove_cvref_t<A>::value_type;                          \
+    return FN(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), axis);           \
+  }
+
+AUTODIFF_GRAPH_REDUCE(sum, graph_sum)
+AUTODIFF_GRAPH_REDUCE(max, graph_max)
+AUTODIFF_GRAPH_REDUCE(min, graph_min)
+
+#undef AUTODIFF_GRAPH_REDUCE
 
 // ---------------------------------------------------------------------------
 //  Explicit leaf factories and gradient access.

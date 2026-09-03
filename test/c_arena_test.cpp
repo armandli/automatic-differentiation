@@ -118,6 +118,19 @@ TEST(CArena, NegCounterStartsAtZero) {
   EXPECT_EQ(arena.onode_neg_count(), 1);
 }
 
+TEST(CArena, ReductionCountersIncrementIndependently) {
+  CArena<double> arena;
+  EXPECT_EQ(arena.onode_sum_count(), 0);
+  EXPECT_EQ(arena.onode_max_count(), 0);
+  EXPECT_EQ(arena.onode_min_count(), 0);
+  arena.note_onode_sum();
+  arena.note_onode_sum();
+  arena.note_onode_max();
+  EXPECT_EQ(arena.onode_sum_count(), 2);
+  EXPECT_EQ(arena.onode_max_count(), 1);
+  EXPECT_EQ(arena.onode_min_count(), 0);
+}
+
 // ---------------------------------------------------------------------------
 //  Node ownership
 // ---------------------------------------------------------------------------

@@ -25,8 +25,11 @@ using autodiff::graph_dot;
 using autodiff::graph_exp;
 using autodiff::graph_hadamard;
 using autodiff::graph_log;
+using autodiff::graph_max;
+using autodiff::graph_min;
 using autodiff::graph_neg;
 using autodiff::graph_pow;
+using autodiff::graph_sum;
 using autodiff::graph_sin;
 using autodiff::graph_sqrt;
 using autodiff::graph_sub;
@@ -804,6 +807,137 @@ TEST(Leaf, ZeroGradClearsEveryNode) {
   zero_grad(arena);
   EXPECT_DOUBLE_EQ(x.grad().data()[0], 0.0);
   EXPECT_DOUBLE_EQ(y.grad().data()[1], 0.0);
+}
+
+// ---------------------------------------------------------------------------
+//  Reduction — sum / max / min, full and per-axis
+// ---------------------------------------------------------------------------
+
+// Fill a tensor row-major with 1, 2, 3, ... so reductions are easy to check.
+static void fill_iota(CArray<double>& a) {
+  for (int64_t i = 0, n = static_cast<int64_t>(a.size()); i < n; ++i)
+    a.data()[i] = static_cast<double>(i) + 1.0;
+}
+
+TEST(Reduction, SumOverEverythingYieldsScalar) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                   // 1..6
+  auto& n = sum(x);
+  EXPECT_EQ(n.op(), Op::Sum);
+  EXPECT_EQ(n.axis(), -1);
+  EXPECT_EQ(n.right(), nullptr);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+  EXPECT_DOUBLE_EQ(n.item(), 21.0);
+}
+
+TEST(Reduction, SumAlongAxisDropsThatAxis) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                   // [[1,2,3],[4,5,6]]
+
+  auto& c = sum(x, 0);
+  EXPECT_EQ(c.shape(), (Shape{3}));
+  EXPECT_EQ(c.axis(), 0);
+  EXPECT_DOUBLE_EQ(c.data()[0], 5.0);
+  EXPECT_DOUBLE_EQ(c.data()[1], 7.0);
+  EXPECT_DOUBLE_EQ(c.data()[2], 9.0);
+
+  auto& r = sum(x, 1);
+  EXPECT_EQ(r.shape(), (Shape{2}));
+  EXPECT_EQ(r.axis(), 1);
+  EXPECT_DOUBLE_EQ(r.data()[0], 6.0);
+  EXPECT_DOUBLE_EQ(r.data()[1], 15.0);
+}
+
+TEST(Reduction, NegativeAxisIsSameAsCountingFromEnd) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);
+  auto& a = sum(x, -1);
+  auto& b = sum(x, 1);
+  EXPECT_EQ(a.axis(), 1);
+  EXPECT_TRUE(autodiff::content_equal(a, b));
+}
+
+TEST(Reduction, ThreeDimAxisReduction) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3, 4}, 0.0);
+  fill_iota(x);                                   // element (i,j,k) = i*12 + j*4 + k + 1
+  auto& n = sum(x, 1);
+  EXPECT_EQ(n.shape(), (Shape{2, 4}));
+  // output (i,k) = sum over j of (i*12 + j*4 + k + 1) = 3*(i*12+k+1) + 4*(0+1+2)
+  EXPECT_DOUBLE_EQ((n[0, 0]), 3.0 * 1.0 + 12.0);
+  EXPECT_DOUBLE_EQ((n[1, 3]), 3.0 * (12.0 + 3.0 + 1.0) + 12.0);
+}
+
+TEST(Reduction, RankOneAxisReductionYieldsScalar) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{4}, 0.0);
+  fill_iota(x);                                   // 1,2,3,4
+  auto& n = sum(x, 0);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+  EXPECT_DOUBLE_EQ(n.item(), 10.0);
+}
+
+TEST(Reduction, MaxAndMinFullAndPerAxis) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  const double v[2][3] = {{3, 1, 4}, {1, 5, 9}};
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j) x[i, j] = v[i][j];
+
+  EXPECT_DOUBLE_EQ(max(x).item(), 9.0);
+  EXPECT_DOUBLE_EQ(min(x).item(), 1.0);
+
+  auto& rmax = max(x, 1);
+  EXPECT_EQ(rmax.op(), Op::Max);
+  EXPECT_EQ(rmax.shape(), (Shape{2}));
+  EXPECT_DOUBLE_EQ(rmax.data()[0], 4.0);
+  EXPECT_DOUBLE_EQ(rmax.data()[1], 9.0);
+
+  auto& cmin = min(x, 0);
+  EXPECT_EQ(cmin.op(), Op::Min);
+  EXPECT_EQ(cmin.shape(), (Shape{3}));
+  EXPECT_DOUBLE_EQ(cmin.data()[0], 1.0);
+  EXPECT_DOUBLE_EQ(cmin.data()[1], 1.0);
+  EXPECT_DOUBLE_EQ(cmin.data()[2], 4.0);
+}
+
+TEST(Reduction, CounterBumpsPerReduction) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0);
+  graph_sum(&a);
+  graph_max(&a, 1);
+  graph_min(&a, 0);
+  graph_min(&a);
+  EXPECT_EQ(arena.onode_sum_count(), 1);
+  EXPECT_EQ(arena.onode_max_count(), 1);
+  EXPECT_EQ(arena.onode_min_count(), 2);
+}
+
+TEST(Reduction, PromotesCArrayOperand) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{3}, 2.0);
+  auto& n = sum(x);
+  EXPECT_EQ(n.left()->mKind, autodiff::NodeKind::Constant);
+  EXPECT_FALSE(n.requires_grad());
+
+  CArray<double> w(arena, Shape{3}, 2.0);
+  w.set_requires_grad();
+  auto& m = sum(w, 0);
+  EXPECT_EQ(m.left()->mKind, autodiff::NodeKind::Variable);
+  EXPECT_TRUE(m.requires_grad());
+}
+
+TEST(Reduction, LowLevelGraphMaxOnNode) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 0.0);
+  fill_iota(a);
+  ONode<double>& n = graph_max(&a, 0);
+  EXPECT_EQ(n.shape(), (Shape{3}));
+  EXPECT_DOUBLE_EQ(n.data()[0], 4.0);
+  EXPECT_DOUBLE_EQ(n.data()[2], 6.0);
 }
 
 } // namespace
