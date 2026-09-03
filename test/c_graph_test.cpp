@@ -448,4 +448,51 @@ TEST(OperatorOverload, ChainedOpsLinkCorrectly) {
   EXPECT_EQ(abxa.right(), static_cast<Node<double>*>(&a));
 }
 
+// ---------------------------------------------------------------------------
+//  NodeName
+// ---------------------------------------------------------------------------
+
+TEST(NodeName, VNodeAutoNameUsesCounter) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2}, 1.0);
+  VNode<double> b(arena, Shape{2}, 1.0);
+  EXPECT_EQ(a.name(), "var_0");
+  EXPECT_EQ(b.name(), "var_1");
+}
+
+TEST(NodeName, VNodeCustomNameIsUsed) {
+  CArena<double> arena;
+  VNode<double> v(arena, Shape{2}, "weights", 1.0);
+  EXPECT_EQ(v.name(), "weights");
+}
+
+TEST(NodeName, VNodeNamesAreDistinct) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2}, 1.0);
+  VNode<double> b(arena, Shape{2}, 1.0);
+  EXPECT_NE(a.name(), b.name());
+}
+
+TEST(NodeName, CNodeAutoNameUsesCounter) {
+  CArena<double> arena;
+  CNode<double> a(arena, Shape{2}, 1.0);
+  CNode<double> b(arena, Shape{2}, 1.0);
+  EXPECT_EQ(a.name(), "const_0");
+  EXPECT_EQ(b.name(), "const_1");
+}
+
+TEST(NodeName, CNodeCustomNameIsUsed) {
+  CArena<double> arena;
+  CNode<double> c(arena, Shape{2}, "bias", 0.0);
+  EXPECT_EQ(c.name(), "bias");
+}
+
+TEST(NodeName, VNodeAndCNodeCountersAreIndependent) {
+  CArena<double> arena;
+  VNode<double> v(arena, Shape{2}, 1.0);
+  CNode<double> c(arena, Shape{2}, 1.0);
+  EXPECT_EQ(v.name(), "var_0");
+  EXPECT_EQ(c.name(), "const_0");
+}
+
 } // namespace

@@ -50,8 +50,8 @@ struct CArena {
   }
 
   // Creation counters — one call per buffer-bearing object built on this arena.
-  void note_vnode()      noexcept { ++mVnodeCount; }
-  void note_cnode()      noexcept { ++mCnodeCount; }
+  int64_t note_vnode()   noexcept { return mVnodeCount++; }
+  int64_t note_cnode()   noexcept { return mCnodeCount++; }
   void note_onode_add()  noexcept { ++mOnodeAddCount; }
   void note_onode_sub()  noexcept { ++mOnodeSubCount; }
   void note_onode_mul()  noexcept { ++mOnodeMulCount; }

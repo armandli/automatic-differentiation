@@ -9,6 +9,8 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <string>
+#include <string_view>
 
 namespace autodiff {
 
@@ -26,9 +28,11 @@ enum class Op { Add, Sub, Mul, Div, Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 template <typename T>
 struct Node : CArray<T> {
   CArray<T> mGrad;
+  s::string mName;
 
   const CArray<T>& grad() const noexcept { return mGrad; }
   CArray<T>&       grad()       noexcept { return mGrad; }
+  const s::string& name() const noexcept { return mName; }
 
   void zero_grad() {
     T* p = mGrad.data();
@@ -63,7 +67,13 @@ template <typename T>
 struct VNode : Node<T> {
   VNode(CArena<T>& arena, const Shape& shape, T val = T{})
     : Node<T>(arena, shape, val) {
+    this->mName = "var_" + s::to_string(arena.note_vnode());
+  }
+
+  VNode(CArena<T>& arena, const Shape& shape, s::string_view name, T val = T{})
+    : Node<T>(arena, shape, val) {
     arena.note_vnode();
+    this->mName = name;
   }
 };
 
@@ -74,7 +84,13 @@ template <typename T>
 struct CNode : Node<T> {
   CNode(CArena<T>& arena, const Shape& shape, T val = T{})
     : Node<T>(arena, shape, val) {
+    this->mName = "const_" + s::to_string(arena.note_cnode());
+  }
+
+  CNode(CArena<T>& arena, const Shape& shape, s::string_view name, T val = T{})
+    : Node<T>(arena, shape, val) {
     arena.note_cnode();
+    this->mName = name;
   }
 };
 
