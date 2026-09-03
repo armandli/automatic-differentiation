@@ -8,9 +8,10 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
-#include <memory>
 #include <numeric>
 #include <vector>
+
+#include <c_arena.h>
 
 namespace autodiff {
 
@@ -173,154 +174,30 @@ inline Shape resolve_reshape(const Shape& request, int64_t total){
   return resolved;
 }
 
-template <typename T> struct CArray;
-template <typename T> struct CArrayCRef;
-
-// CArrayRef: a mutable, non-owning view carrying its own Shape and an element
-// offset into the owner's buffer, so reshape() and sub() never copy and can be
-// chained. The owner must outlive the view (like std::span); a view survives a
-// move of the owning CArray, whose buffer address is stable.
-template <typename T>
-struct CArrayRef {
-  CArrayRef() noexcept: mShape(), mOffset(0), mData(nullptr) {}
-  CArrayRef(const Shape& shape, T* base, s::size_t offset) noexcept
-    : mShape(shape), mOffset(offset), mData(base) {}
-
-  const Shape& shape() const noexcept { return mShape; }
-  const s::vector<int64_t>& dims() const noexcept { return mShape.dims(); }
-  s::size_t rank() const noexcept { return mShape.rank(); }
-  s::size_t size() const { return static_cast<s::size_t>(mShape.product()); }
-  s::size_t offset() const noexcept { return mOffset; }
-
-  // Start of this view's span (base + offset).
-  T* data() const noexcept { return mData + mOffset; }
-
-  template <s::integral... Is>
-  T& operator[](Is... idxs) const {
-    assert(sizeof...(Is) == mShape.rank());
-    return mData[mOffset + static_cast<s::size_t>(
-      mShape.flatten(Index{static_cast<int64_t>(idxs)...}))];
-  }
-
-  T& at(const Index& index) const {
-    return mData[mOffset + static_cast<s::size_t>(mShape.flatten(index))];
-  }
-
-  T& item() const {
-    assert(size() == 1);
-    return mData[mOffset];
-  }
-
-  CArrayRef reshape(const Shape& shape) const {
-    return CArrayRef(resolve_reshape(shape, mShape.product()), mData, mOffset);
-  }
-
-  CArrayRef unsqueeze(int64_t axis) const {
-    return CArrayRef(mShape.unsqueeze(axis), mData, mOffset);
-  }
-
-  CArrayRef squeeze(int n) const {
-    return CArrayRef(mShape.squeeze(n), mData, mOffset);
-  }
-
-  // Select slice `i` of the leading axis (negative counts from the end).
-  CArrayRef sub(int64_t i) const {
-    assert(mShape.rank() >= 1);
-    const int64_t d0 = mShape[0];
-    if (i < 0) i += d0;
-    assert(i >= 0 and i < d0);
-    const Shape child = mShape.subshape();
-    return CArrayRef(child, mData,
-      mOffset + static_cast<s::size_t>(i) * static_cast<s::size_t>(child.product()));
-  }
-
-  // Copy this view's span into a fresh owning array.
-  CArray<T> clone() const;
-private:
-  Shape     mShape;
-  s::size_t mOffset;
-  T*        mData; // points at the owner's element 0; non-owning
-};
-
-// CArrayCRef: the read-only twin of CArrayRef.
-template <typename T>
-struct CArrayCRef {
-  CArrayCRef() noexcept: mShape(), mOffset(0), mData(nullptr) {}
-  CArrayCRef(const Shape& shape, const T* base, s::size_t offset) noexcept
-    : mShape(shape), mOffset(offset), mData(base) {}
-  CArrayCRef(const CArrayRef<T>& r) noexcept
-    : mShape(r.shape()), mOffset(r.offset()), mData(r.data() - r.offset()) {}
-  CArrayCRef(const CArray<T>& a) noexcept;
-
-  const Shape& shape() const noexcept { return mShape; }
-  const s::vector<int64_t>& dims() const noexcept { return mShape.dims(); }
-  s::size_t rank() const noexcept { return mShape.rank(); }
-  s::size_t size() const { return static_cast<s::size_t>(mShape.product()); }
-  s::size_t offset() const noexcept { return mOffset; }
-
-  const T* data() const noexcept { return mData + mOffset; }
-
-  template <s::integral... Is>
-  const T& operator[](Is... idxs) const {
-    assert(sizeof...(Is) == mShape.rank());
-    return mData[mOffset + static_cast<s::size_t>(
-      mShape.flatten(Index{static_cast<int64_t>(idxs)...}))];
-  }
-
-  const T& at(const Index& index) const {
-    return mData[mOffset + static_cast<s::size_t>(mShape.flatten(index))];
-  }
-
-  const T& item() const {
-    assert(size() == 1);
-    return mData[mOffset];
-  }
-
-  CArrayCRef reshape(const Shape& shape) const {
-    return CArrayCRef(resolve_reshape(shape, mShape.product()), mData, mOffset);
-  }
-
-  CArrayCRef unsqueeze(int64_t axis) const {
-    return CArrayCRef(mShape.unsqueeze(axis), mData, mOffset);
-  }
-
-  CArrayCRef squeeze(int n) const {
-    return CArrayCRef(mShape.squeeze(n), mData, mOffset);
-  }
-
-  CArrayCRef sub(int64_t i) const {
-    assert(mShape.rank() >= 1);
-    const int64_t d0 = mShape[0];
-    if (i < 0) i += d0;
-    assert(i >= 0 and i < d0);
-    const Shape child = mShape.subshape();
-    return CArrayCRef(child, mData,
-      mOffset + static_cast<s::size_t>(i) * static_cast<s::size_t>(child.product()));
-  }
-
-  CArray<T> clone() const;
-private:
-  Shape     mShape;
-  s::size_t mOffset;
-  const T*  mData;
-};
-
-// CArray: owns a contiguous, row-major buffer (last axis contiguous). Copy is
-// deleted; duplicate explicitly with clone().
+// ---------------------------------------------------------------------------
+//  CArray<T>: a Shape plus a non-owning pointer into a CArena<T> block. The
+//  arena owns the storage; CArray is a stack value handle. Copy and move are
+//  shallow — both alias the same buffer (deliberate: clone() is the only deep
+//  copy). reshape()/sub()/unsqueeze()/squeeze() are const and return a fresh
+//  CArray<T> over the same storage; they are mutable-capable (shallow const),
+//  so read-only intent is expressed by passing `const CArray<T>&` and using
+//  the const element accessors. A default-constructed CArray has no arena;
+//  clone() on one asserts.
+// ---------------------------------------------------------------------------
 template <typename T>
 struct CArray {
-  CArray() noexcept: mShape(), mBuffer(nullptr) {}
-  explicit CArray(T val): mShape({1}), mBuffer(s::make_unique_for_overwrite<T[]>(1U)) {
-    s::fill_n(mBuffer.get(), 1U, val);
-  }
-  explicit CArray(const Shape& shape, T init_val = T{})
-    : mShape(shape),
-      mBuffer(s::make_unique_for_overwrite<T[]>(static_cast<s::size_t>(shape.product()))) {
-    s::fill_n(mBuffer.get(), static_cast<s::size_t>(shape.product()), init_val);
-  }
+  CArray() noexcept: mShape(), mData(nullptr), mArena(nullptr) {}
 
-  CArray(const CArray&) = delete;
-  CArray& operator=(const CArray&) = delete;
+  explicit CArray(CArena<T>& arena, T val)
+    : mShape({1}), mData(arena.allocate(1U, val)), mArena(&arena) {}
+
+  explicit CArray(CArena<T>& arena, const Shape& shape, T init_val = T{})
+    : mShape(shape)
+    , mData(arena.allocate(static_cast<s::size_t>(shape.product()), init_val))
+    , mArena(&arena) {}
+
+  CArray(const CArray&) = default;             // shallow: aliases the same buffer
+  CArray& operator=(const CArray&) = default;
   CArray(CArray&&) noexcept = default;
   CArray& operator=(CArray&&) noexcept = default;
   ~CArray() = default;
@@ -330,93 +207,77 @@ struct CArray {
   s::size_t rank() const noexcept { return mShape.rank(); }
   s::size_t size() const { return static_cast<s::size_t>(mShape.product()); }
 
-  const T* data() const noexcept { return mBuffer.get(); }
-  T* data() noexcept { return mBuffer.get(); }
+  const T* data() const noexcept { return mData; }
+  T* data() noexcept { return mData; }
 
+  CArena<T>* arena() const noexcept { return mArena; }
+
+  // The only deep copy: allocate a fresh block in the same arena.
   CArray clone() const {
-    CArray out(mShape);
-    s::copy_n(mBuffer.get(), size(), out.mBuffer.get());
+    assert(mArena != nullptr);
+    CArray out(*mArena, mShape);
+    s::copy_n(mData, size(), out.mData);
     return out;
   }
 
   template <s::integral... Is>
   T& operator[](Is... idxs){
     assert(sizeof...(Is) == mShape.rank());
-    return mBuffer[static_cast<s::size_t>(
+    return mData[static_cast<s::size_t>(
       mShape.flatten(Index{static_cast<int64_t>(idxs)...}))];
   }
   template <s::integral... Is>
   const T& operator[](Is... idxs) const {
     assert(sizeof...(Is) == mShape.rank());
-    return mBuffer[static_cast<s::size_t>(
+    return mData[static_cast<s::size_t>(
       mShape.flatten(Index{static_cast<int64_t>(idxs)...}))];
   }
 
   T& at(const Index& index){
-    return mBuffer[static_cast<s::size_t>(mShape.flatten(index))];
+    return mData[static_cast<s::size_t>(mShape.flatten(index))];
   }
   const T& at(const Index& index) const {
-    return mBuffer[static_cast<s::size_t>(mShape.flatten(index))];
+    return mData[static_cast<s::size_t>(mShape.flatten(index))];
   }
 
-  T& item(){ assert(size() == 1); return mBuffer[0]; }
-  const T& item() const { assert(size() == 1); return mBuffer[0]; }
+  T& item(){ assert(size() == 1); return mData[0]; }
+  const T& item() const { assert(size() == 1); return mData[0]; }
 
-  CArrayRef<T> ref() noexcept {
-    return CArrayRef<T>(mShape, mBuffer.get(), 0);
+  // Aliasing views: a fresh CArray<T> over this array's storage, no allocation.
+  CArray reshape(const Shape& shape) const {
+    return CArray(resolve_reshape(shape, mShape.product()), mData, mArena);
   }
-  CArrayCRef<T> cref() const noexcept {
-    return CArrayCRef<T>(mShape, mBuffer.get(), 0);
+  CArray unsqueeze(int64_t axis) const {
+    return CArray(mShape.unsqueeze(axis), mData, mArena);
   }
-
-  CArrayRef<T> reshape(const Shape& shape){
-    return CArrayRef<T>(resolve_reshape(shape, mShape.product()), mBuffer.get(), 0);
-  }
-  CArrayCRef<T> reshape(const Shape& shape) const {
-    return CArrayCRef<T>(resolve_reshape(shape, mShape.product()), mBuffer.get(), 0);
+  CArray squeeze(int n) const {
+    return CArray(mShape.squeeze(n), mData, mArena);
   }
 
-  CArrayRef<T> unsqueeze(int64_t axis){
-    return CArrayRef<T>(mShape.unsqueeze(axis), mBuffer.get(), 0);
-  }
-  CArrayCRef<T> unsqueeze(int64_t axis) const {
-    return CArrayCRef<T>(mShape.unsqueeze(axis), mBuffer.get(), 0);
-  }
-
-  CArrayRef<T> squeeze(int n){
-    return CArrayRef<T>(mShape.squeeze(n), mBuffer.get(), 0);
-  }
-  CArrayCRef<T> squeeze(int n) const {
-    return CArrayCRef<T>(mShape.squeeze(n), mBuffer.get(), 0);
+  // Select slice `i` of the leading axis (negative counts from the end).
+  CArray sub(int64_t i) const {
+    assert(mShape.rank() >= 1);
+    const int64_t d0 = mShape[0];
+    if (i < 0) i += d0;
+    assert(i >= 0 and i < d0);
+    const Shape child = mShape.subshape();
+    return CArray(child,
+      mData + static_cast<s::size_t>(i) * static_cast<s::size_t>(child.product()),
+      mArena);
   }
 
-  CArrayRef<T> sub(int64_t i){ return ref().sub(i); }
-  CArrayCRef<T> sub(int64_t i) const { return cref().sub(i); }
 private:
-  Shape              mShape;
-  s::unique_ptr<T[]> mBuffer;
+  // Aliasing-view constructor: shares base's storage, allocates nothing.
+  CArray(const Shape& shape, T* base, CArena<T>* arena) noexcept
+    : mShape(shape), mData(base), mArena(arena) {}
+
+  Shape      mShape;
+  T*         mData;   // non-owning; into a CArena<T> block
+  CArena<T>* mArena;  // non-owning; for clone() / further allocation
 };
 
-template <typename T>
-CArrayCRef<T>::CArrayCRef(const CArray<T>& a) noexcept
-  : mShape(a.shape()), mOffset(0), mData(a.data()) {}
-
-template <typename T>
-CArray<T> CArrayRef<T>::clone() const {
-  CArray<T> out(mShape);
-  s::copy_n(mData + mOffset, size(), out.data());
-  return out;
-}
-
-template <typename T>
-CArray<T> CArrayCRef<T>::clone() const {
-  CArray<T> out(mShape);
-  s::copy_n(mData + mOffset, size(), out.data());
-  return out;
-}
-
-// Exact element-wise equality for any mix of CArray / CArrayRef / CArrayCRef:
-// same shape, same values in row-major order.
+// Exact element-wise equality: same shape, same values in row-major order.
+// There is deliberately no operator== on CArray (float == footgun).
 template <typename A, typename B>
 bool content_equal(const A& a, const B& b){
   if (not (a.shape() == b.shape())) return false;
