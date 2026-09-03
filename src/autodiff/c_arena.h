@@ -52,52 +52,55 @@ struct CArena {
   // Creation counters — one call per buffer-bearing object built on this arena.
   int64_t note_vnode()   noexcept { return mVnodeCount++; }
   int64_t note_cnode()   noexcept { return mCnodeCount++; }
-  void note_onode_add()  noexcept { ++mOnodeAddCount; }
-  void note_onode_sub()  noexcept { ++mOnodeSubCount; }
-  void note_onode_mul()  noexcept { ++mOnodeMulCount; }
-  void note_onode_div()  noexcept { ++mOnodeDivCount; }
-  void note_onode_exp()  noexcept { ++mOnodeExpCount; }
-  void note_onode_log()  noexcept { ++mOnodeLogCount; }
-  void note_onode_sin()  noexcept { ++mOnodeSinCount; }
-  void note_onode_cos()  noexcept { ++mOnodeCosCount; }
-  void note_onode_tan()  noexcept { ++mOnodeTanCount; }
-  void note_onode_sqrt() noexcept { ++mOnodeSqrtCount; }
-  void note_onode_abs()  noexcept { ++mOnodeAbsCount; }
-  void note_onode_pow()  noexcept { ++mOnodePowCount; }
+  void note_onode_add()      noexcept { ++mOnodeAddCount; }
+  void note_onode_sub()      noexcept { ++mOnodeSubCount; }
+  void note_onode_hadamard() noexcept { ++mOnodeHadamardCount; }
+  void note_onode_dot()      noexcept { ++mOnodeDotCount; }
+  void note_onode_div()      noexcept { ++mOnodeDivCount; }
+  void note_onode_exp()      noexcept { ++mOnodeExpCount; }
+  void note_onode_log()      noexcept { ++mOnodeLogCount; }
+  void note_onode_sin()      noexcept { ++mOnodeSinCount; }
+  void note_onode_cos()      noexcept { ++mOnodeCosCount; }
+  void note_onode_tan()      noexcept { ++mOnodeTanCount; }
+  void note_onode_sqrt()     noexcept { ++mOnodeSqrtCount; }
+  void note_onode_abs()      noexcept { ++mOnodeAbsCount; }
+  void note_onode_pow()      noexcept { ++mOnodePowCount; }
 
-  int64_t carray_count()     const noexcept { return mCarrayCount; }
-  int64_t vnode_count()      const noexcept { return mVnodeCount; }
-  int64_t cnode_count()      const noexcept { return mCnodeCount; }
-  int64_t onode_add_count()  const noexcept { return mOnodeAddCount; }
-  int64_t onode_sub_count()  const noexcept { return mOnodeSubCount; }
-  int64_t onode_mul_count()  const noexcept { return mOnodeMulCount; }
-  int64_t onode_div_count()  const noexcept { return mOnodeDivCount; }
-  int64_t onode_exp_count()  const noexcept { return mOnodeExpCount; }
-  int64_t onode_log_count()  const noexcept { return mOnodeLogCount; }
-  int64_t onode_sin_count()  const noexcept { return mOnodeSinCount; }
-  int64_t onode_cos_count()  const noexcept { return mOnodeCosCount; }
-  int64_t onode_tan_count()  const noexcept { return mOnodeTanCount; }
-  int64_t onode_sqrt_count() const noexcept { return mOnodeSqrtCount; }
-  int64_t onode_abs_count()  const noexcept { return mOnodeAbsCount; }
-  int64_t onode_pow_count()  const noexcept { return mOnodePowCount; }
+  int64_t carray_count()         const noexcept { return mCarrayCount; }
+  int64_t vnode_count()          const noexcept { return mVnodeCount; }
+  int64_t cnode_count()          const noexcept { return mCnodeCount; }
+  int64_t onode_add_count()      const noexcept { return mOnodeAddCount; }
+  int64_t onode_sub_count()      const noexcept { return mOnodeSubCount; }
+  int64_t onode_hadamard_count() const noexcept { return mOnodeHadamardCount; }
+  int64_t onode_dot_count()      const noexcept { return mOnodeDotCount; }
+  int64_t onode_div_count()      const noexcept { return mOnodeDivCount; }
+  int64_t onode_exp_count()      const noexcept { return mOnodeExpCount; }
+  int64_t onode_log_count()      const noexcept { return mOnodeLogCount; }
+  int64_t onode_sin_count()      const noexcept { return mOnodeSinCount; }
+  int64_t onode_cos_count()      const noexcept { return mOnodeCosCount; }
+  int64_t onode_tan_count()      const noexcept { return mOnodeTanCount; }
+  int64_t onode_sqrt_count()     const noexcept { return mOnodeSqrtCount; }
+  int64_t onode_abs_count()      const noexcept { return mOnodeAbsCount; }
+  int64_t onode_pow_count()      const noexcept { return mOnodePowCount; }
 
 private:
   s::vector<s::unique_ptr<T[]>> mBuffers;
-  int64_t mCarrayCount    = 0;
-  int64_t mVnodeCount     = 0;
-  int64_t mCnodeCount     = 0;
-  int64_t mOnodeAddCount  = 0;
-  int64_t mOnodeSubCount  = 0;
-  int64_t mOnodeMulCount  = 0;
-  int64_t mOnodeDivCount  = 0;
-  int64_t mOnodeExpCount  = 0;
-  int64_t mOnodeLogCount  = 0;
-  int64_t mOnodeSinCount  = 0;
-  int64_t mOnodeCosCount  = 0;
-  int64_t mOnodeTanCount  = 0;
-  int64_t mOnodeSqrtCount = 0;
-  int64_t mOnodeAbsCount  = 0;
-  int64_t mOnodePowCount  = 0;
+  int64_t mCarrayCount        = 0;
+  int64_t mVnodeCount         = 0;
+  int64_t mCnodeCount         = 0;
+  int64_t mOnodeAddCount      = 0;
+  int64_t mOnodeSubCount      = 0;
+  int64_t mOnodeHadamardCount = 0;
+  int64_t mOnodeDotCount      = 0;
+  int64_t mOnodeDivCount      = 0;
+  int64_t mOnodeExpCount      = 0;
+  int64_t mOnodeLogCount      = 0;
+  int64_t mOnodeSinCount      = 0;
+  int64_t mOnodeCosCount      = 0;
+  int64_t mOnodeTanCount      = 0;
+  int64_t mOnodeSqrtCount     = 0;
+  int64_t mOnodeAbsCount      = 0;
+  int64_t mOnodePowCount      = 0;
 };
 
 } // autodiff

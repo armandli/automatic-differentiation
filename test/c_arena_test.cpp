@@ -82,15 +82,17 @@ TEST(CArena, NoteCountersIncrementIndependently) {
   arena.note_vnode();
   arena.note_cnode();
   arena.note_onode_add();
+  arena.note_onode_dot();
   arena.note_onode_pow();
   arena.note_onode_pow();
 
   EXPECT_EQ(arena.vnode_count(), 2);
   EXPECT_EQ(arena.cnode_count(), 1);
   EXPECT_EQ(arena.onode_add_count(), 1);
+  EXPECT_EQ(arena.onode_dot_count(), 1);
   EXPECT_EQ(arena.onode_pow_count(), 2);
-  EXPECT_EQ(arena.onode_sub_count(), 0);   // untouched
-  EXPECT_EQ(arena.onode_mul_count(), 0);
+  EXPECT_EQ(arena.onode_sub_count(), 0);        // untouched
+  EXPECT_EQ(arena.onode_hadamard_count(), 0);
 }
 
 TEST(CArena, IntTypeParameterWorks) {

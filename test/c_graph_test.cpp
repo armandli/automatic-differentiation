@@ -20,9 +20,10 @@ using autodiff::graph_abs;
 using autodiff::graph_add;
 using autodiff::graph_cos;
 using autodiff::graph_div;
+using autodiff::graph_dot;
 using autodiff::graph_exp;
+using autodiff::graph_hadamard;
 using autodiff::graph_log;
-using autodiff::graph_mul;
 using autodiff::graph_pow;
 using autodiff::graph_sin;
 using autodiff::graph_sqrt;
@@ -63,12 +64,20 @@ TEST(Counters, SubIncrementsSubCounter) {
   EXPECT_EQ(arena.onode_sub_count(), before + 1);
 }
 
-TEST(Counters, MulIncrementsMulCounter) {
+TEST(Counters, HadamardIncrementsHadamardCounter) {
   CArena<double> arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
-  const int64_t before = arena.onode_mul_count();
-  ONode<double> n = graph_mul(&a, &b);
-  EXPECT_EQ(arena.onode_mul_count(), before + 1);
+  const int64_t before = arena.onode_hadamard_count();
+  ONode<double> n = graph_hadamard(&a, &b);
+  EXPECT_EQ(arena.onode_hadamard_count(), before + 1);
+}
+
+TEST(Counters, DotIncrementsDotCounter) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 2}, 2.0);
+  const int64_t before = arena.onode_dot_count();
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(arena.onode_dot_count(), before + 1);
 }
 
 TEST(Counters, DivIncrementsDivCounter) {
@@ -196,6 +205,34 @@ TEST(ONodeShape, PowPreservesShape) {
   EXPECT_EQ(n.shape(), (Shape{2, 3, 4}));
 }
 
+TEST(ONodeShape, DotMatMatContractsInnerDim) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 4}, 1.0);
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{2, 4}));
+}
+
+TEST(ONodeShape, DotMatVecDropsTrailingAxis) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3}, 1.0);
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{2}));
+}
+
+TEST(ONodeShape, DotVecMatDropsLeadingAxis) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{3}, 1.0), b(arena, Shape{3, 4}, 1.0);
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{4}));
+}
+
+TEST(ONodeShape, DotVecVecYieldsSingleValue) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{3}, 1.0), b(arena, Shape{3}, 1.0);
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+}
+
 // ---------------------------------------------------------------------------
 //  ONodeLinks
 // ---------------------------------------------------------------------------
@@ -221,16 +258,25 @@ TEST(ONodeLinks, OpEnumMatchesOperation) {
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   ONode<double> add_n = graph_add(&a, &b);
   ONode<double> sub_n = graph_sub(&a, &b);
-  ONode<double> mul_n = graph_mul(&a, &b);
+  ONode<double> mul_n = graph_hadamard(&a, &b);
   ONode<double> div_n = graph_div(&a, &b);
   ONode<double> exp_n = graph_exp(&a);
   ONode<double> log_n = graph_log(&a);
   EXPECT_EQ(add_n.op(), Op::Add);
   EXPECT_EQ(sub_n.op(), Op::Sub);
-  EXPECT_EQ(mul_n.op(), Op::Mul);
+  EXPECT_EQ(mul_n.op(), Op::Hadamard);
   EXPECT_EQ(div_n.op(), Op::Div);
   EXPECT_EQ(exp_n.op(), Op::Exp);
   EXPECT_EQ(log_n.op(), Op::Log);
+}
+
+TEST(ONodeLinks, DotLinksBothInputs) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 2}, 2.0);
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.op(), Op::Dot);
+  EXPECT_EQ(n.left(),  static_cast<Node<double>*>(&a));
+  EXPECT_EQ(n.right(), static_cast<Node<double>*>(&b));
 }
 
 TEST(ONodeLinks, NewOpsEnumMatchesOperation) {
@@ -286,10 +332,10 @@ TEST(ONodeValues, SubIsElementWise) {
     EXPECT_DOUBLE_EQ(n[i], 3.0);
 }
 
-TEST(ONodeValues, MulIsElementWise) {
+TEST(ONodeValues, HadamardIsElementWise) {
   CArena<double> arena;
   VNode<double> a(arena, Shape{3}, 3.0), b(arena, Shape{3}, 4.0);
-  ONode<double> n = graph_mul(&a, &b);
+  ONode<double> n = graph_hadamard(&a, &b);
   for (int64_t i = 0; i < 3; ++i)
     EXPECT_DOUBLE_EQ(n[i], 12.0);
 }
@@ -366,6 +412,47 @@ TEST(ONodeValues, PowIsElementWise) {
     EXPECT_DOUBLE_EQ(n[i], std::pow(2.0, 3.0));
 }
 
+TEST(ONodeValues, DotComputesMatrixProduct) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 0.0), b(arena, Shape{3, 2}, 0.0);
+  const double av[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  const double bv[3][2] = {{7, 8}, {9, 10}, {11, 12}};
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j) a[i, j] = av[i][j];
+  for (int64_t i = 0; i < 3; ++i)
+    for (int64_t j = 0; j < 2; ++j) b[i, j] = bv[i][j];
+
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{2, 2}));
+  EXPECT_DOUBLE_EQ((n[0, 0]), 58.0);
+  EXPECT_DOUBLE_EQ((n[0, 1]), 64.0);
+  EXPECT_DOUBLE_EQ((n[1, 0]), 139.0);
+  EXPECT_DOUBLE_EQ((n[1, 1]), 154.0);
+}
+
+TEST(ONodeValues, DotVecVecIsInnerProduct) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{3}, 0.0), b(arena, Shape{3}, 0.0);
+  for (int64_t i = 0; i < 3; ++i) { a[i] = i + 1.0; b[i] = i + 4.0; }
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+  EXPECT_DOUBLE_EQ(n.item(), 32.0);   // 1*4 + 2*5 + 3*6
+}
+
+TEST(ONodeValues, DotMatVecIsMatrixVectorProduct) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 0.0), b(arena, Shape{3}, 0.0);
+  const double av[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j) a[i, j] = av[i][j];
+  for (int64_t i = 0; i < 3; ++i) b[i] = i + 1.0;   // {1, 2, 3}
+
+  ONode<double> n = graph_dot(&a, &b);
+  EXPECT_EQ(n.shape(), (Shape{2}));
+  EXPECT_DOUBLE_EQ(n[0], 14.0);   // 1 + 4 + 9
+  EXPECT_DOUBLE_EQ(n[1], 32.0);   // 4 + 10 + 18
+}
+
 // ---------------------------------------------------------------------------
 //  GradBuffer
 // ---------------------------------------------------------------------------
@@ -422,11 +509,11 @@ TEST(OperatorOverload, MinusBuildsSubNode) {
   EXPECT_DOUBLE_EQ(n.data()[0], 3.0);
 }
 
-TEST(OperatorOverload, StarBuildsMulNode) {
+TEST(OperatorOverload, StarBuildsHadamardNode) {
   CArena<double> arena;
   VNode<double> a(arena, Shape{2}, 3.0), b(arena, Shape{2}, 4.0);
   ONode<double> n = a * b;
-  EXPECT_EQ(n.op(), Op::Mul);
+  EXPECT_EQ(n.op(), Op::Hadamard);
   EXPECT_DOUBLE_EQ(n.data()[0], 12.0);
 }
 
@@ -436,6 +523,23 @@ TEST(OperatorOverload, SlashBuildsDivNode) {
   ONode<double> n = a / b;
   EXPECT_EQ(n.op(), Op::Div);
   EXPECT_DOUBLE_EQ(n.data()[0], 2.0);
+}
+
+TEST(OperatorOverload, CaretBuildsPowNode) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2}, 2.0), b(arena, Shape{2}, 3.0);
+  ONode<double> n = a ^ b;
+  EXPECT_EQ(n.op(), Op::Pow);
+  EXPECT_DOUBLE_EQ(n.data()[0], 8.0);
+}
+
+TEST(OperatorOverload, AmpersandBuildsDotNode) {
+  CArena<double> arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 2}, 1.0);
+  ONode<double> n = a & b;
+  EXPECT_EQ(n.op(), Op::Dot);
+  EXPECT_EQ(n.shape(), (Shape{2, 2}));
+  EXPECT_DOUBLE_EQ(n.data()[0], 3.0);
 }
 
 TEST(OperatorOverload, ChainedOpsLinkCorrectly) {

@@ -16,7 +16,7 @@ namespace autodiff {
 
 namespace s = std;
 
-enum class Op { Add, Sub, Mul, Div, Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
+enum class Op { Add, Sub, Hadamard, Dot, Div, Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
 //  Node<T>: base for all graph nodes.
@@ -116,18 +116,19 @@ struct ONode : Node<T> {
     , mOp(op), mLeft(left), mRight(right)
   {
     switch (op) {
-      case Op::Add:  arena.note_onode_add();  break;
-      case Op::Sub:  arena.note_onode_sub();  break;
-      case Op::Mul:  arena.note_onode_mul();  break;
-      case Op::Div:  arena.note_onode_div();  break;
-      case Op::Exp:  arena.note_onode_exp();  break;
-      case Op::Log:  arena.note_onode_log();  break;
-      case Op::Sin:  arena.note_onode_sin();  break;
-      case Op::Cos:  arena.note_onode_cos();  break;
-      case Op::Tan:  arena.note_onode_tan();  break;
-      case Op::Sqrt: arena.note_onode_sqrt(); break;
-      case Op::Abs:  arena.note_onode_abs();  break;
-      case Op::Pow:  arena.note_onode_pow();  break;
+      case Op::Add:      arena.note_onode_add();      break;
+      case Op::Sub:      arena.note_onode_sub();      break;
+      case Op::Hadamard: arena.note_onode_hadamard(); break;
+      case Op::Dot:      arena.note_onode_dot();      break;
+      case Op::Div:      arena.note_onode_div();      break;
+      case Op::Exp:      arena.note_onode_exp();      break;
+      case Op::Log:      arena.note_onode_log();      break;
+      case Op::Sin:      arena.note_onode_sin();      break;
+      case Op::Cos:      arena.note_onode_cos();      break;
+      case Op::Tan:      arena.note_onode_tan();      break;
+      case Op::Sqrt:     arena.note_onode_sqrt();     break;
+      case Op::Abs:      arena.note_onode_abs();      break;
+      case Op::Pow:      arena.note_onode_pow();      break;
     }
   }
 
@@ -137,7 +138,7 @@ struct ONode : Node<T> {
 };
 
 // ---------------------------------------------------------------------------
-//  Internal element-wise loop helpers
+//  Internal loop helpers
 // ---------------------------------------------------------------------------
 namespace detail {
 
@@ -164,6 +165,45 @@ ONode<T> make_unary(CArena<T>& arena, Op op, Node<T>* a, UnOp f) {
   return ONode<T>(arena, op, s::move(result), a, nullptr);
 }
 
+// Matrix multiply / dot for rank-1 and rank-2 operands, numpy-matmul shape
+// rules: a rank-1 left operand is treated as a row (1,k) and its leading axis
+// dropped from the result; a rank-1 right operand is a column (k,1) and its
+// trailing axis dropped; a 1-D * 1-D contraction yields a single value {1}.
+// The product is always computed as the (m,k)*(k,n) triple loop in row-major
+// flat indices, valid for every case because out.product() == m*n.
+template <typename T>
+ONode<T> make_dot(CArena<T>& arena, Node<T>* a, Node<T>* b) {
+  assert(a->arena() == b->arena());
+  const s::size_t ra = a->rank(), rb = b->rank();
+  assert((ra == 1 or ra == 2) and (rb == 1 or rb == 2));
+
+  const int64_t m = (ra == 2) ? a->shape()[0] : 1;
+  const int64_t k = (ra == 2) ? a->shape()[1] : a->shape()[0];
+  const int64_t n = (rb == 2) ? b->shape()[1] : 1;
+  assert(k == b->shape()[0]);   // rb == 1 -> shape()[0]; rb == 2 -> rows
+
+  Shape out{m, n};                     // the rank-2 * rank-2 case
+  if (ra == 1 and rb == 1)
+    out = Shape{1};
+  else if (ra == 1)
+    out = Shape{n};
+  else if (rb == 1)
+    out = Shape{m};
+
+  CArray<T> result(arena, out);
+  const T* pa = a->data();
+  const T* pb = b->data();
+  T* pr = result.data();
+  for (int64_t i = 0; i < m; ++i)
+    for (int64_t j = 0; j < n; ++j){
+      T acc{};
+      for (int64_t p = 0; p < k; ++p)
+        acc += pa[i * k + p] * pb[p * n + j];
+      pr[i * n + j] = acc;
+    }
+  return ONode<T>(arena, Op::Dot, s::move(result), a, b);
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -180,9 +220,16 @@ ONode<T> graph_sub(Node<T>* a, Node<T>* b) {
   return detail::make_binary(*a->arena(), Op::Sub, a, b, s::minus<T>{});
 }
 
+// Element-wise (Hadamard) product; both operands must share a shape.
 template <typename T>
-ONode<T> graph_mul(Node<T>* a, Node<T>* b) {
-  return detail::make_binary(*a->arena(), Op::Mul, a, b, s::multiplies<T>{});
+ONode<T> graph_hadamard(Node<T>* a, Node<T>* b) {
+  return detail::make_binary(*a->arena(), Op::Hadamard, a, b, s::multiplies<T>{});
+}
+
+// Matrix multiply / dot; see detail::make_dot for the rank-1/rank-2 shape rules.
+template <typename T>
+ONode<T> graph_dot(Node<T>* a, Node<T>* b) {
+  return detail::make_dot(*a->arena(), a, b);
 }
 
 template <typename T>
@@ -233,6 +280,10 @@ ONode<T> graph_pow(Node<T>* a, Node<T>* b) {
 // ---------------------------------------------------------------------------
 //  Operator overloads on Node<T>& (binary only; unary ops remain free fns).
 //  Lvalue operands only, so intermediates in a chain must be named.
+//
+//  `*` is element-wise, `&` is matrix multiply / dot, `^` is pow. Note that C++
+//  gives `&` and `^` lower precedence than `+ - * /`, so mixed expressions need
+//  parentheses: write `(a & b) + c` and `(x ^ n) * c`.
 // ---------------------------------------------------------------------------
 template <typename T>
 ONode<T> operator+(Node<T>& a, Node<T>& b) { return graph_add(&a, &b); }
@@ -241,10 +292,16 @@ template <typename T>
 ONode<T> operator-(Node<T>& a, Node<T>& b) { return graph_sub(&a, &b); }
 
 template <typename T>
-ONode<T> operator*(Node<T>& a, Node<T>& b) { return graph_mul(&a, &b); }
+ONode<T> operator*(Node<T>& a, Node<T>& b) { return graph_hadamard(&a, &b); }
 
 template <typename T>
 ONode<T> operator/(Node<T>& a, Node<T>& b) { return graph_div(&a, &b); }
+
+template <typename T>
+ONode<T> operator^(Node<T>& a, Node<T>& b) { return graph_pow(&a, &b); }
+
+template <typename T>
+ONode<T> operator&(Node<T>& a, Node<T>& b) { return graph_dot(&a, &b); }
 
 } // autodiff
 
