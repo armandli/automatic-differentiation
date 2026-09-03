@@ -20,7 +20,7 @@ namespace autodiff {
 
 namespace s = std;
 
-enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min,
+enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -112,9 +112,9 @@ struct CNode : Node<T> {
 // ---------------------------------------------------------------------------
 //  ONode<T>: operation node — holds the result, links to its input nodes.
 //  mRight is null for unary operations (Neg, Exp, Log, Sin, reductions, ...).
-//  mAxis is the reduced axis for Sum/Max/Min (a resolved non-negative index),
-//  or -1 for a full reduction and every non-reduction op. Built by the graph_*
-//  factories into the operands' arena; the input nodes it points at are
+//  mAxis is the reduced axis for Sum/Max/Min/Mean (a resolved non-negative
+//  index), or -1 for a full reduction and every non-reduction op. Built by the
+//  graph_* factories into the operands' arena; the input nodes it points at are
 //  arena-owned too, so they outlive it.
 // ---------------------------------------------------------------------------
 template <typename T>
@@ -139,6 +139,7 @@ struct ONode : Node<T> {
       case Op::Sum:      arena.note_onode_sum();      break;
       case Op::Max:      arena.note_onode_max();      break;
       case Op::Min:      arena.note_onode_min();      break;
+      case Op::Mean:     arena.note_onode_mean();     break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -230,14 +231,17 @@ ONode<T>& make_dot(CArena<T>& arena, Node<T>* a, Node<T>* b) {
 
 // Reduce `a` along one axis, or over every element when `axis` is absent. The
 // accumulator is seeded with the first element of each group and folded with
-// f(acc, x) over the rest, so one fold serves sum (plus), max, and min. Output
-// shape = input shape with `axis` removed; a full reduction — or removing the
-// last remaining axis — yields Shape{1}. The resolved axis is stored on the
-// ONode: a reverse pass broadcasts the Sum grad back along it, and routes the
-// Max/Min grad to each group's arg-extreme element (recomputed from mLeft).
+// f(acc, x) over the rest, so one fold serves sum (plus), max, and min. When
+// `average` is set the fold result is divided by the group size before it is
+// stored — a plus-fold plus `average` is the mean. Output shape = input shape
+// with `axis` removed; a full reduction — or removing the last remaining axis —
+// yields Shape{1}. The resolved axis is stored on the ONode: a reverse pass
+// broadcasts the Sum grad back along it (the Mean grad likewise, scaled by
+// 1/count), and routes the Max/Min grad to each group's arg-extreme element
+// (recomputed from mLeft).
 template <typename T, typename Fold>
 ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
-                      s::optional<int64_t> axis, Fold f) {
+                      s::optional<int64_t> axis, Fold f, bool average = false) {
   assert(a->size() >= 1);
   const Shape& in = a->shape();
   const int64_t rank = static_cast<int64_t>(in.rank());
@@ -248,7 +252,7 @@ ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
     for (s::size_t i = 1, n = a->size(); i < n; ++i)
       acc = f(acc, pin[i]);
     CArray<T> result(arena, Shape{1});
-    result.data()[0] = acc;
+    result.data()[0] = average ? acc / static_cast<T>(a->size()) : acc;
     return arena.template adopt<ONode<T>>(arena, op, s::move(result), a, nullptr, -1);
   }
 
@@ -273,7 +277,7 @@ ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
       T acc = pin[(o * axlen) * inner + j];
       for (int64_t k = 1; k < axlen; ++k)
         acc = f(acc, pin[(o * axlen + k) * inner + j]);
-      pr[o * inner + j] = acc;
+      pr[o * inner + j] = average ? acc / static_cast<T>(axlen) : acc;
     }
   return arena.template adopt<ONode<T>>(arena, op, s::move(result), a, nullptr, ax);
 }
@@ -304,6 +308,11 @@ ONode<T>& graph_neg(Node<T>* a) {
 template <typename T>
 ONode<T>& graph_sum(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
   return detail::make_reduce(*a->arena(), Op::Sum, a, axis, s::plus<T>{});
+}
+
+template <typename T>
+ONode<T>& graph_mean(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_reduce(*a->arena(), Op::Mean, a, axis, s::plus<T>{}, true);
 }
 
 template <typename T>
@@ -518,11 +527,12 @@ auto& pow(A&& a, B&& b) {
 }
 
 // ---------------------------------------------------------------------------
-//  Reductions on a Node or CArray operand: sum(x) / max(x) / min(x) fold every
-//  element; sum(x, k) / max(x, k) / min(x, k) fold axis k (negative allowed).
-//  Resolved by ADL for graph operands — no clash with std::max/std::min (the
-//  1-arg call and the optional<int64_t> 2nd arg match no std overload); use
-//  graph_max / graph_min if `using namespace std;` is also in effect.
+//  Reductions on a Node or CArray operand: sum(x) / mean(x) / max(x) / min(x)
+//  fold every element; sum(x, k) / mean(x, k) / max(x, k) / min(x, k) fold axis k
+//  (negative allowed). Resolved by ADL for graph operands — no clash with
+//  std::max/std::min (the 1-arg call and the optional<int64_t> 2nd arg match no
+//  std overload); use graph_max / graph_min if `using namespace std;` is also in
+//  effect.
 // ---------------------------------------------------------------------------
 #define AUTODIFF_GRAPH_REDUCE(NAME, FN)                                           \
   template <typename A>                                                           \
@@ -532,9 +542,10 @@ auto& pow(A&& a, B&& b) {
     return FN(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), axis);           \
   }
 
-AUTODIFF_GRAPH_REDUCE(sum, graph_sum)
-AUTODIFF_GRAPH_REDUCE(max, graph_max)
-AUTODIFF_GRAPH_REDUCE(min, graph_min)
+AUTODIFF_GRAPH_REDUCE(sum,  graph_sum)
+AUTODIFF_GRAPH_REDUCE(mean, graph_mean)
+AUTODIFF_GRAPH_REDUCE(max,  graph_max)
+AUTODIFF_GRAPH_REDUCE(min,  graph_min)
 
 #undef AUTODIFF_GRAPH_REDUCE
 

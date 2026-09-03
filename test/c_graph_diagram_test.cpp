@@ -102,6 +102,12 @@ TEST(GraphDiagram, ReductionLabelShowsAxis) {
 
   CArray<double> z(arena, Shape{2, 3}, 1.0);
   EXPECT_TRUE(contains(mermaid_of(sum(z)), "\"Sum (all)<br/>(1)\""));
+
+  CArray<double> w(arena, Shape{2, 3}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(mean(w, 1)), "\"Mean axis=1<br/>(2)\""));
+
+  CArray<double> v(arena, Shape{2, 3}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(mean(v)), "\"Mean (all)<br/>(1)\""));
 }
 
 TEST(GraphDiagram, ConstantScalarShowsValue) {

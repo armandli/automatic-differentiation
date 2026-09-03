@@ -26,6 +26,7 @@ using autodiff::graph_exp;
 using autodiff::graph_hadamard;
 using autodiff::graph_log;
 using autodiff::graph_max;
+using autodiff::graph_mean;
 using autodiff::graph_min;
 using autodiff::graph_neg;
 using autodiff::graph_pow;
@@ -829,7 +830,7 @@ TEST(Leaf, ZeroGradClearsEveryNode) {
 }
 
 // ---------------------------------------------------------------------------
-//  Reduction — sum / max / min, full and per-axis
+//  Reduction — sum / mean / max / min, full and per-axis
 // ---------------------------------------------------------------------------
 
 // Fill a tensor row-major with 1, 2, 3, ... so reductions are easy to check.
@@ -899,6 +900,37 @@ TEST(Reduction, RankOneAxisReductionYieldsScalar) {
   EXPECT_DOUBLE_EQ(n.item(), 10.0);
 }
 
+TEST(Reduction, MeanOverEverythingYieldsScalar) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                   // 1..6
+  auto& n = mean(x);
+  EXPECT_EQ(n.op(), Op::Mean);
+  EXPECT_EQ(n.axis(), -1);
+  EXPECT_EQ(n.right(), nullptr);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+  EXPECT_DOUBLE_EQ(n.item(), 3.5);               // 21 / 6
+}
+
+TEST(Reduction, MeanAlongAxisDropsThatAxis) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                   // [[1,2,3],[4,5,6]]
+
+  auto& c = mean(x, 0);
+  EXPECT_EQ(c.shape(), (Shape{3}));
+  EXPECT_EQ(c.axis(), 0);
+  EXPECT_DOUBLE_EQ(c.data()[0], 2.5);
+  EXPECT_DOUBLE_EQ(c.data()[1], 3.5);
+  EXPECT_DOUBLE_EQ(c.data()[2], 4.5);
+
+  auto& r = mean(x, 1);
+  EXPECT_EQ(r.shape(), (Shape{2}));
+  EXPECT_EQ(r.axis(), 1);
+  EXPECT_DOUBLE_EQ(r.data()[0], 2.0);
+  EXPECT_DOUBLE_EQ(r.data()[1], 5.0);
+}
+
 TEST(Reduction, MaxAndMinFullAndPerAxis) {
   CArena<double> arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
@@ -927,10 +959,13 @@ TEST(Reduction, CounterBumpsPerReduction) {
   CArena<double> arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0);
   graph_sum(&a);
+  graph_mean(&a, 1);
+  graph_mean(&a);
   graph_max(&a, 1);
   graph_min(&a, 0);
   graph_min(&a);
   EXPECT_EQ(arena.onode_sum_count(), 1);
+  EXPECT_EQ(arena.onode_mean_count(), 2);
   EXPECT_EQ(arena.onode_max_count(), 1);
   EXPECT_EQ(arena.onode_min_count(), 2);
 }
