@@ -37,6 +37,7 @@ using autodiff::graph_sqrt;
 using autodiff::graph_squeeze;
 using autodiff::graph_sum;
 using autodiff::graph_tan;
+using autodiff::graph_transpose;
 using autodiff::graph_unsqueeze;
 using autodiff::graph_variable;
 using autodiff::graph_where;
@@ -474,6 +475,46 @@ TEST(ReverseReshape, UnsqueezeRoutesAdjointBackInOriginalShape) {
 }
 
 // ---------------------------------------------------------------------------
+//  transpose
+// ---------------------------------------------------------------------------
+
+TEST(ReverseTranspose, MatrixTransposeRoutesAdjointBackViaInversePermutation) {
+  CArena arena;
+  CArray<double> xh = make_arr(arena, Shape{2, 3}, {1, 2, 3, 4, 5, 6});
+  auto& x = graph_variable(xh);
+  auto& t = graph_transpose(&x);          // default: reverse axes -> shape (3,2)
+  CArray<double> seed = make_arr(arena, Shape{3, 2}, {10, 20, 30, 40, 50, 60});
+  backward(t, seed);
+  // t[j,i] = x[i,j] ; dL/dx[i,j] = seed[j,i]
+  expect_near(grad_of(xh).data(), {10, 30, 50, 20, 40, 60});
+  EXPECT_EQ(grad_of(xh).shape(), (Shape{2, 3}));
+}
+
+TEST(ReverseTranspose, RankThreePermutationRoutesAdjointViaInverseAxes) {
+  // A non-self-inverse permutation (axes={1,2,0}, inverse={2,0,1}) so the
+  // backward rule's invert_perm is actually exercised, not just axes=[1,0]
+  // where the permutation happens to be its own inverse.
+  CArena arena;
+  std::vector<double> xv(24), sv(24);
+  for (std::size_t i = 0; i < xv.size(); ++i) xv[i] = static_cast<double>(i) + 1.0;
+  for (std::size_t i = 0; i < sv.size(); ++i) sv[i] = static_cast<double>(i) + 1.0;
+  CArray<double> xh = make_arr(arena, Shape{2, 3, 4}, xv);
+  auto& x = graph_variable(xh);
+  auto& t = graph_transpose(&x, std::vector<int64_t>{1, 2, 0});   // shape (3,4,2)
+  EXPECT_EQ(t.shape(), (Shape{3, 4, 2}));
+  CArray<double> seed = make_arr(arena, Shape{3, 4, 2}, sv);
+  backward(t, seed);
+
+  const CArray<double>& g = grad_of(xh);
+  EXPECT_EQ(g.shape(), (Shape{2, 3, 4}));
+  // t[j,k,i] = x[i,j,k] ; dL/dx[i,j,k] = seed[j,k,i]
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j)
+      for (int64_t k = 0; k < 4; ++k)
+        EXPECT_DOUBLE_EQ((g[i, j, k]), (seed[j, k, i]));
+}
+
+// ---------------------------------------------------------------------------
 //  where
 // ---------------------------------------------------------------------------
 
@@ -529,6 +570,18 @@ TEST(ReverseAccumulate, VariableUsedDirectlyAndThroughReshapeAccumulates) {
   auto& loss = graph_sum(&x) + graph_sum(&r);
   backward(loss);
   // d(sum(x))/dx = 1 everywhere; d(sum(reshape(x)))/dx = 1 everywhere too.
+  expect_near(grad_of(xh).data(), {2, 2, 2, 2, 2, 2});
+  EXPECT_EQ(grad_of(xh).shape(), (Shape{2, 3}));
+}
+
+TEST(ReverseAccumulate, VariableUsedDirectlyAndThroughTransposeAccumulates) {
+  CArena arena;
+  CArray<double> xh = make_arr(arena, Shape{2, 3}, {1, 2, 3, 4, 5, 6});
+  auto& x = graph_variable(xh);
+  auto& t = graph_transpose(&x);
+  auto& loss = graph_sum(&x) + graph_sum(&t);
+  backward(loss);
+  // d(sum(x))/dx = 1 everywhere; d(sum(transpose(x)))/dx = 1 everywhere too.
   expect_near(grad_of(xh).data(), {2, 2, 2, 2, 2, 2});
   EXPECT_EQ(grad_of(xh).shape(), (Shape{2, 3}));
 }

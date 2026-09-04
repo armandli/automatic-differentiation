@@ -51,6 +51,7 @@ inline const char* op_name(Op op) {
     case Op::Reshape:   return "Reshape";
     case Op::Squeeze:   return "Squeeze";
     case Op::Unsqueeze: return "Unsqueeze";
+    case Op::Transpose: return "Transpose";
     case Op::Exp:      return "Exp";
     case Op::Log:      return "Log";
     case Op::Sin:      return "Sin";
@@ -90,6 +91,16 @@ inline s::string shape_str(const Shape& shape) {
   return out;
 }
 
+inline s::string axes_str(const s::vector<int64_t>& axes) {
+  s::string out = "[";
+  for (s::size_t i = 0; i < axes.size(); ++i) {
+    if (i) out += ",";
+    out += s::to_string(axes[i]);
+  }
+  out += "]";
+  return out;
+}
+
 template <typename T>
 struct mermaid_writer {
   s::ostream& out;
@@ -126,6 +137,8 @@ struct mermaid_writer {
             o.op() == Op::CrossEntropy or o.op() == Op::SoftmaxCrossEntropy) {
           if (o.axis() >= 0) out << " axis=" << o.axis();
           else               out << " (all)";
+        } else if (o.op() == Op::Transpose) {
+          out << " axes=" << axes_str(o.axes());
         }
         out << "<br/>" << shape_str(n.shape()) << "\"}}:::op\n";
 

@@ -2,9 +2,11 @@
 #include <c_graph_diagram.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -114,6 +116,16 @@ TEST(GraphDiagram, ReductionLabelShowsAxis) {
 
   CArray<double> t(arena, Shape{2, 3}, 1.0);
   EXPECT_TRUE(contains(mermaid_of(softmax(t)), "\"Softmax (all)<br/>(2, 3)\""));
+}
+
+TEST(GraphDiagram, TransposeLabelShowsAxes) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(transpose(x)), "\"Transpose axes=[1,0]<br/>(3, 2)\""));
+
+  CArray<double> y(arena, Shape{2, 3, 4}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(transpose(y, std::vector<int64_t>{1, 2, 0})),
+                       "\"Transpose axes=[1,2,0]<br/>(3, 4, 2)\""));
 }
 
 TEST(GraphDiagram, CrossEntropyIsBinarySoftmaxIsUnary) {

@@ -22,7 +22,7 @@ namespace s = std;
 
 enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
                 Softmax, CrossEntropy, SoftmaxCrossEntropy, Where,
-                Reshape, Squeeze, Unsqueeze,
+                Reshape, Squeeze, Unsqueeze, Transpose,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -134,9 +134,10 @@ struct CNode : Node<T> {
 //  (constant, non-differentiable) 0/1 selector.
 //  mAxis is the resolved non-negative axis for the axis-wise ops (Sum/Max/Min/
 //  Mean/Softmax/CrossEntropy/SoftmaxCrossEntropy), or -1 for a whole-array
-//  reduction and every non-axis op. Built by the graph_* factories into the
-//  operands' arena; the input nodes it points at are arena-owned too, so they
-//  outlive it.
+//  reduction and every non-axis op. mAxes is the resolved axis permutation for
+//  Transpose (see detail::resolve_transpose_axes), empty for every other op.
+//  Built by the graph_* factories into the operands' arena; the input nodes it
+//  points at are arena-owned too, so they outlive it.
 // ---------------------------------------------------------------------------
 template <typename T>
 struct ONode : Node<T> {
@@ -145,12 +146,14 @@ struct ONode : Node<T> {
   Node<T>* mRight;
   int64_t  mAxis;
   Node<T>* mCond;
+  s::vector<int64_t> mAxes;
 
   ONode(CArena& arena, Op op, CArray<T>&& result,
         Node<T>* left, Node<T>* right = nullptr, int64_t axis = -1,
-        Node<T>* cond = nullptr)
+        Node<T>* cond = nullptr, s::vector<int64_t> axes = {})
     : Node<T>(NodeKind::Operation, arena, s::move(result))
     , mOp(op), mLeft(left), mRight(right), mAxis(axis), mCond(cond)
+    , mAxes(s::move(axes))
   {
     switch (op) {
       case Op::Add:      arena.note_onode_add();      break;
@@ -170,6 +173,7 @@ struct ONode : Node<T> {
       case Op::Reshape:   arena.note_onode_reshape();   break;
       case Op::Squeeze:   arena.note_onode_squeeze();   break;
       case Op::Unsqueeze: arena.note_onode_unsqueeze(); break;
+      case Op::Transpose: arena.note_onode_transpose(); break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -188,6 +192,7 @@ struct ONode : Node<T> {
   Node<T>* right() const noexcept { return mRight; }
   int64_t  axis()  const noexcept { return mAxis; }
   Node<T>* cond()  const noexcept { return mCond; }
+  const s::vector<int64_t>& axes() const noexcept { return mAxes; }
 
   // Reverse pass: given the adjoint flowing in from downstream, return one
   // (input node, gradient) pair per differentiable input. No entry is produced
@@ -418,6 +423,77 @@ ONode<T>& make_reshape(CArena& arena, Op op, Node<T>* a, CArray<T>&& view) {
   return arena.template adopt<ONode<T>>(arena, op, s::move(view), a, nullptr);
 }
 
+// Resolve a transpose request against `rank`: an empty `axes` defaults to
+// reversing every axis (numpy's default); otherwise negative entries are
+// normalized (axis += rank) and the result must be a genuine permutation of
+// [0, rank) — every entry in range, none repeated.
+inline s::vector<int64_t> resolve_transpose_axes(int64_t rank, s::vector<int64_t> axes) {
+  if (axes.empty()) {
+    axes.resize(static_cast<s::size_t>(rank));
+    for (int64_t i = 0; i < rank; ++i) axes[static_cast<s::size_t>(i)] = rank - 1 - i;
+    return axes;
+  }
+  assert(static_cast<int64_t>(axes.size()) == rank);
+  s::vector<bool> seen(static_cast<s::size_t>(rank), false);
+  for (int64_t& ax : axes) {
+    if (ax < 0) ax += rank;
+    assert(ax >= 0 and ax < rank);
+    assert(not seen[static_cast<s::size_t>(ax)]);
+    seen[static_cast<s::size_t>(ax)] = true;
+  }
+  return axes;
+}
+
+// Physically reorder `in`'s elements so that out.shape()[i] == in.shape()[axes[i]]
+// for every output axis i — a general N-D transpose. CArray has no stride
+// support (always contiguous row-major), so this allocates a fresh buffer and
+// copies element-by-element: for each output flat index, decode its per-axis
+// coordinates against out's row-major strides (same mixed-radix technique
+// Shape::flatten uses), then accumulate the source flat index by stepping
+// istrides[axes[i]] per coordinate (moving one step along output axis i is
+// exactly one step along input axis axes[i]). O(N * rank), no allocation
+// beyond the output buffer and the two rank-sized stride vectors. `axes` must
+// already be resolved (see resolve_transpose_axes) — used by make_transpose
+// on the way in and by dreverse_ad.h's grad_transpose (with the inverted
+// permutation) on the way back, since transpose's VJP is itself a permute.
+template <typename T>
+CArray<T> permute(CArena& arena, const CArray<T>& in, const s::vector<int64_t>& axes) {
+  const Shape& ishape = in.shape();
+  const s::size_t rank = ishape.rank();
+  assert(axes.size() == rank);
+
+  s::vector<int64_t> istrides(rank), oshape_dims(rank), ostrides(rank);
+  int64_t acc = 1;
+  for (s::size_t d = rank; d-- > 0; ) { istrides[d] = acc; acc *= ishape[static_cast<int64_t>(d)]; }
+  for (s::size_t i = 0; i < rank; ++i) oshape_dims[i] = ishape[axes[i]];
+  Shape oshape{oshape_dims};
+  acc = 1;
+  for (s::size_t d = rank; d-- > 0; ) { ostrides[d] = acc; acc *= oshape_dims[d]; }
+
+  CArray<T> result(arena, oshape);
+  const T* pin = in.data();
+  T* pout = result.data();
+  for (s::size_t flat = 0, n = result.size(); flat < n; ++flat) {
+    int64_t rem = static_cast<int64_t>(flat);
+    int64_t in_flat = 0;
+    for (s::size_t d = 0; d < rank; ++d) {
+      const int64_t coord = rem / ostrides[d];
+      rem -= coord * ostrides[d];
+      in_flat += coord * istrides[static_cast<s::size_t>(axes[d])];
+    }
+    pout[flat] = pin[in_flat];
+  }
+  return result;
+}
+
+template <typename T>
+ONode<T>& make_transpose(CArena& arena, Node<T>* a, s::vector<int64_t> axes) {
+  s::vector<int64_t> resolved = resolve_transpose_axes(static_cast<int64_t>(a->rank()), s::move(axes));
+  CArray<T> result = permute(arena, static_cast<const CArray<T>&>(*a), resolved);
+  return arena.template adopt<ONode<T>>(arena, Op::Transpose, s::move(result),
+                                        a, nullptr, -1, nullptr, s::move(resolved));
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -512,6 +588,16 @@ ONode<T>& graph_squeeze(Node<T>* a, int n) {
 template <typename T>
 ONode<T>& graph_unsqueeze(Node<T>* a, int64_t axis) {
   return detail::make_reshape(*a->arena(), Op::Unsqueeze, a, a->unsqueeze(axis));
+}
+
+// General N-D axis permutation: out.shape()[i] == a->shape()[axes[i]]. An empty
+// `axes` (the default) reverses every axis, matching numpy's default transpose.
+// Unlike reshape/squeeze/unsqueeze this is never a zero-copy view — CArray has
+// no stride support, so it always allocates and physically reorders the
+// elements (see detail::permute).
+template <typename T>
+ONode<T>& graph_transpose(Node<T>* a, s::vector<int64_t> axes = {}) {
+  return detail::make_transpose(*a->arena(), a, s::move(axes));
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -814,6 +900,8 @@ auto& where(C&& cond, A&& a, B&& b) {
 // reshape(x, shape) / squeeze(x, n) / unsqueeze(x, axis): shape-changing views
 // of a Node or CArray operand, ADL-resolved like the reductions. See
 // graph_reshape/graph_squeeze/graph_unsqueeze and detail::make_reshape.
+// transpose(x, axes) is similar in spirit but, unlike its neighbors here, is
+// never a zero-copy view (see graph_transpose).
 template <typename A>
   requires detail::is_graph_operand<A>
 auto& reshape(A&& a, const Shape& shape) {
@@ -833,6 +921,13 @@ template <typename A>
 auto& unsqueeze(A&& a, int64_t axis) {
   using T = typename s::remove_cvref_t<A>::value_type;
   return graph_unsqueeze(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), axis);
+}
+
+template <typename A>
+  requires detail::is_graph_operand<A>
+auto& transpose(A&& a, s::vector<int64_t> axes = {}) {
+  using T = typename s::remove_cvref_t<A>::value_type;
+  return graph_transpose(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), s::move(axes));
 }
 
 // ---------------------------------------------------------------------------

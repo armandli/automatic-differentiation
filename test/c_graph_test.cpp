@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <type_traits>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -41,6 +42,7 @@ using autodiff::graph_sqrt;
 using autodiff::graph_squeeze;
 using autodiff::graph_sub;
 using autodiff::graph_tan;
+using autodiff::graph_transpose;
 using autodiff::graph_unsqueeze;
 using autodiff::graph_variable;
 using autodiff::graph_where;
@@ -1389,6 +1391,76 @@ TEST(Reshape, CounterBumpsPerOp) {
   EXPECT_EQ(arena.onode_reshape_count(), 2);
   EXPECT_EQ(arena.onode_squeeze_count(), 1);
   EXPECT_EQ(arena.onode_unsqueeze_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+//  Transpose — general N-D axis permutation, physically reorders elements
+// ---------------------------------------------------------------------------
+
+TEST(Transpose, DefaultReversesAllAxesForRank2) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                     // [[1,2,3],[4,5,6]]
+  auto& n = transpose(x);
+  EXPECT_EQ(n.op(), Op::Transpose);
+  EXPECT_EQ(n.right(), nullptr);
+  EXPECT_EQ(n.shape(), (Shape{3, 2}));
+  EXPECT_EQ(n.axes(), (std::vector<int64_t>{1, 0}));
+  EXPECT_DOUBLE_EQ((n[0, 0]), 1.0);
+  EXPECT_DOUBLE_EQ((n[0, 1]), 4.0);
+  EXPECT_DOUBLE_EQ((n[1, 0]), 2.0);
+  EXPECT_DOUBLE_EQ((n[1, 1]), 5.0);
+  EXPECT_DOUBLE_EQ((n[2, 0]), 3.0);
+  EXPECT_DOUBLE_EQ((n[2, 1]), 6.0);
+}
+
+TEST(Transpose, ExplicitAxesPermuteRank3) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3, 4}, 0.0);
+  fill_iota(x);                                     // element (i,j,k) = i*12 + j*4 + k + 1
+  auto& n = transpose(x, std::vector<int64_t>{1, 0, 2});
+  EXPECT_EQ(n.shape(), (Shape{3, 2, 4}));
+  EXPECT_EQ(n.axes(), (std::vector<int64_t>{1, 0, 2}));
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j)
+      for (int64_t k = 0; k < 4; ++k)
+        EXPECT_DOUBLE_EQ((n[j, i, k]), static_cast<double>(i * 12 + j * 4 + k) + 1.0);
+}
+
+TEST(Transpose, NegativeAxesNormalizeToSamePermutation) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);
+  auto& pos = transpose(x, std::vector<int64_t>{1, 0});
+  CArray<double> y(arena, Shape{2, 3}, 0.0);
+  fill_iota(y);
+  auto& neg = transpose(y, std::vector<int64_t>{-1, -2});
+  EXPECT_EQ(neg.axes(), pos.axes());
+  for (int64_t i = 0; i < 6; ++i)
+    EXPECT_DOUBLE_EQ(neg.data()[i], pos.data()[i]);
+}
+
+TEST(Transpose, PromotesCArrayOperand) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3}, 2.0);
+  auto& n = transpose(x);
+  EXPECT_EQ(n.left()->mKind, autodiff::NodeKind::Constant);
+  EXPECT_FALSE(n.requires_grad());
+
+  CArray<double> w(arena, Shape{2, 3}, 2.0);
+  w.set_requires_grad();
+  auto& m = transpose(w);
+  EXPECT_EQ(m.left()->mKind, autodiff::NodeKind::Variable);
+  EXPECT_TRUE(m.requires_grad());
+}
+
+TEST(Transpose, CounterBumpsPerOp) {
+  CArena arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0);
+  const int64_t before = arena.onode_transpose_count();
+  graph_transpose(&a);
+  graph_transpose(&a, std::vector<int64_t>{0, 1});
+  EXPECT_EQ(arena.onode_transpose_count(), before + 2);
 }
 
 } // namespace
