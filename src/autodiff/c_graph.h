@@ -21,7 +21,7 @@ namespace autodiff {
 namespace s = std;
 
 enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
-                Softmax, CrossEntropy, SoftmaxCrossEntropy,
+                Softmax, CrossEntropy, SoftmaxCrossEntropy, Where,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,9 @@ struct CNode : Node<T> {
 //  ONode<T>: operation node — holds the result, links to its input nodes.
 //  mRight is null for unary operations (Neg, Exp, Log, Sin, Softmax, most
 //  reductions, ...); for CrossEntropy/SoftmaxCrossEntropy it is the (constant,
-//  non-differentiable) integer class-label operand.
+//  non-differentiable) integer class-label operand. mCond is null except for
+//  Where, where mLeft/mRight are the two value operands a/b and mCond is the
+//  (constant, non-differentiable) 0/1 selector.
 //  mAxis is the resolved non-negative axis for the axis-wise ops (Sum/Max/Min/
 //  Mean/Softmax/CrossEntropy/SoftmaxCrossEntropy), or -1 for a whole-array
 //  reduction and every non-axis op. Built by the graph_* factories into the
@@ -127,11 +129,13 @@ struct ONode : Node<T> {
   Node<T>* mLeft;
   Node<T>* mRight;
   int64_t  mAxis;
+  Node<T>* mCond;
 
   ONode(CArena& arena, Op op, CArray<T>&& result,
-        Node<T>* left, Node<T>* right = nullptr, int64_t axis = -1)
+        Node<T>* left, Node<T>* right = nullptr, int64_t axis = -1,
+        Node<T>* cond = nullptr)
     : Node<T>(NodeKind::Operation, arena, s::move(result))
-    , mOp(op), mLeft(left), mRight(right), mAxis(axis)
+    , mOp(op), mLeft(left), mRight(right), mAxis(axis), mCond(cond)
   {
     switch (op) {
       case Op::Add:      arena.note_onode_add();      break;
@@ -147,6 +151,7 @@ struct ONode : Node<T> {
       case Op::Softmax:             arena.note_onode_softmax();               break;
       case Op::CrossEntropy:        arena.note_onode_cross_entropy();         break;
       case Op::SoftmaxCrossEntropy: arena.note_onode_softmax_cross_entropy(); break;
+      case Op::Where:               arena.note_onode_where();                 break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -164,6 +169,7 @@ struct ONode : Node<T> {
   Node<T>* left()  const noexcept { return mLeft; }
   Node<T>* right() const noexcept { return mRight; }
   int64_t  axis()  const noexcept { return mAxis; }
+  Node<T>* cond()  const noexcept { return mCond; }
 };
 
 // ---------------------------------------------------------------------------
@@ -360,6 +366,25 @@ ONode<T>& make_cross_entropy(CArena& arena, Op op, Node<T>* pred,
   return arena.template adopt<ONode<T>>(arena, op, s::move(result), pred, target, ax);
 }
 
+// Element-wise select: result[i] = cond[i] != 0 ? a[i] : b[i]. cond, a and b
+// share one shape and arena; the result matches. The condition is kept as mCond
+// (a constant 0/1 leaf) so a reverse pass can route grad_out to a where the
+// condition holds and to b elsewhere; no gradient flows to the condition.
+template <typename T>
+ONode<T>& make_where(CArena& arena, Node<T>* cond, Node<T>* a, Node<T>* b) {
+  assert(cond->arena() == a->arena() and a->arena() == b->arena());
+  assert(cond->shape() == a->shape() and a->shape() == b->shape());
+  CArray<T> result(arena, a->shape());
+  const T* pc = cond->data();
+  const T* pa = a->data();
+  const T* pb = b->data();
+  T* pr = result.data();
+  for (s::size_t i = 0, n = result.size(); i < n; ++i)
+    pr[i] = (pc[i] != T{}) ? pa[i] : pb[i];
+  return arena.template adopt<ONode<T>>(arena, Op::Where, s::move(result),
+                                        a, b, -1, cond);
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -429,6 +454,13 @@ ONode<T>& graph_softmax_cross_entropy(Node<T>* logits, Node<T>* target,
                                       s::optional<int64_t> axis = s::nullopt) {
   return detail::make_cross_entropy(*logits->arena(), Op::SoftmaxCrossEntropy,
                                     logits, target, axis, /*from_logits=*/true);
+}
+
+// Element-wise select: a[i] where cond[i] is nonzero, else b[i]. cond, a and b
+// share the exact shape, which the result matches. See detail::make_where.
+template <typename T>
+ONode<T>& graph_where(Node<T>* cond, Node<T>* a, Node<T>* b) {
+  return detail::make_where(*a->arena(), cond, a, b);
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -711,6 +743,22 @@ AUTODIFF_GRAPH_BINOP_AXIS(cross_entropy,         graph_cross_entropy)
 AUTODIFF_GRAPH_BINOP_AXIS(softmax_cross_entropy, graph_softmax_cross_entropy)
 
 #undef AUTODIFF_GRAPH_BINOP_AXIS
+
+// where(cond, a, b): element-wise select — a[i] where cond[i] is nonzero, else
+// b[i]. cond is typically a CArray<bool> (converted to a 0/1 constant leaf that
+// receives no gradient); a and b must share the exact shape, which the result
+// matches. Named function only (no ternary operator); ADL-resolved for graph
+// operands, no std::where clash. Bare scalars for a/b do not match.
+template <typename C, typename A, typename B>
+  requires (detail::is_graph_operand<C> and
+            detail::is_graph_operand<A> and detail::is_graph_operand<B>)
+auto& where(C&& cond, A&& a, B&& b) {
+  using T = detail::graph_value_t<A, B>;
+  CArena& ar = detail::pick_arena(a, b);
+  return graph_where(&detail::to_node<T>(ar, s::forward<C>(cond)),
+                     &detail::to_node<T>(ar, s::forward<A>(a)),
+                     &detail::to_node<T>(ar, s::forward<B>(b)));
+}
 
 // ---------------------------------------------------------------------------
 //  Explicit leaf factories and gradient access.

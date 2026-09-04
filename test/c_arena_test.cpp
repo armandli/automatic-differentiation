@@ -170,6 +170,14 @@ TEST(CArena, NeuralOpCountersIncrementIndependently) {
   EXPECT_EQ(arena.onode_softmax_cross_entropy_count(), 3);
 }
 
+TEST(CArena, WhereCounterIncrements) {
+  CArena arena;
+  EXPECT_EQ(arena.onode_where_count(), 0);
+  arena.note_onode_where();
+  arena.note_onode_where();
+  EXPECT_EQ(arena.onode_where_count(), 2);
+}
+
 TEST(CArena, AutoRequiresGradPolicy) {
   CArena arena;
   EXPECT_FALSE(arena.auto_requires_grad());

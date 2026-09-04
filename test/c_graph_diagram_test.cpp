@@ -179,4 +179,17 @@ TEST(GraphDiagram, MixedTypeGraphRendersConvertedOperandAsConstant) {
   EXPECT_EQ(count_substr(m, "-->|R|"), 1);
 }
 
+TEST(GraphDiagram, WhereHasThreeLabeledEdges) {
+  CArena arena;
+  CArray<bool>   c(arena, Shape{2}, true);
+  CArray<double> a(arena, Shape{2}, 1.0);
+  CArray<double> b(arena, Shape{2}, 2.0);
+  auto& n = where(c, a, b);
+  const std::string m = mermaid_of(n);
+  EXPECT_TRUE(contains(m, "\"Where<br/>(2)\""));
+  EXPECT_EQ(count_substr(m, "-->|L|"), 1);   // a
+  EXPECT_EQ(count_substr(m, "-->|R|"), 1);   // b
+  EXPECT_EQ(count_substr(m, "-->|C|"), 1);   // cond
+}
+
 } // namespace

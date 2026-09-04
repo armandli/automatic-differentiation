@@ -40,6 +40,7 @@ using autodiff::graph_sqrt;
 using autodiff::graph_sub;
 using autodiff::graph_tan;
 using autodiff::graph_variable;
+using autodiff::graph_where;
 using autodiff::grad_of;
 using autodiff::zero_grad;
 
@@ -1247,6 +1248,81 @@ TEST(MixedType, ConvertedOperandIsAConstantLeaf) {
   EXPECT_EQ(n.right()->mKind, autodiff::NodeKind::Constant);
   EXPECT_FALSE(n.right()->requires_grad());
   EXPECT_DOUBLE_EQ(n.data()[0], 10.0);
+}
+
+// ---------------------------------------------------------------------------
+//  Where — element-wise conditional select
+// ---------------------------------------------------------------------------
+
+TEST(Where, SelectsPerElement) {
+  CArena arena;
+  CArray<bool>   c(arena, Shape{4}, false);
+  c.data()[0] = true; c.data()[2] = true;          // [T, F, T, F]
+  CArray<double> a(arena, Shape{4}, 0.0);
+  CArray<double> b(arena, Shape{4}, 0.0);
+  for (int64_t i = 0; i < 4; ++i) {
+    a.data()[i] = static_cast<double>(i) + 1.0;     // [1, 2, 3, 4]
+    b.data()[i] = 10.0 * (static_cast<double>(i) + 1.0);   // [10, 20, 30, 40]
+  }
+
+  auto& n = where(c, a, b);
+  EXPECT_EQ(n.op(), Op::Where);
+  EXPECT_EQ(n.shape(), (Shape{4}));
+  EXPECT_NE(n.left(), nullptr);
+  EXPECT_NE(n.right(), nullptr);
+  EXPECT_NE(n.cond(), nullptr);
+  EXPECT_DOUBLE_EQ(n.data()[0], 1.0);               // cond true  -> a
+  EXPECT_DOUBLE_EQ(n.data()[1], 20.0);              // cond false -> b
+  EXPECT_DOUBLE_EQ(n.data()[2], 3.0);
+  EXPECT_DOUBLE_EQ(n.data()[3], 40.0);
+}
+
+TEST(Where, TwoDimensional) {
+  CArena arena;
+  CArray<bool>   c(arena, Shape{2, 2}, true);
+  c[0, 1] = false; c[1, 0] = false;
+  CArray<double> a(arena, Shape{2, 2}, 1.0);
+  CArray<double> b(arena, Shape{2, 2}, 9.0);
+  auto& n = where(c, a, b);
+  EXPECT_EQ(n.shape(), (Shape{2, 2}));
+  EXPECT_DOUBLE_EQ((n[0, 0]), 1.0);
+  EXPECT_DOUBLE_EQ((n[0, 1]), 9.0);
+  EXPECT_DOUBLE_EQ((n[1, 0]), 9.0);
+  EXPECT_DOUBLE_EQ((n[1, 1]), 1.0);
+}
+
+TEST(Where, ConditionConvertsToConstantLeaf) {
+  CArena arena;
+  CArray<bool>   c(arena, Shape{2}, true);
+  CArray<double> a(arena, Shape{2}, 1.0);
+  a.set_requires_grad();
+  CArray<double> b(arena, Shape{2}, 2.0);
+  auto& n = where(c, a, b);
+  EXPECT_EQ(n.cond()->mKind, autodiff::NodeKind::Constant);
+  EXPECT_FALSE(n.cond()->requires_grad());
+  EXPECT_TRUE(n.requires_grad());                   // a is a variable
+}
+
+TEST(Where, NumericConditionAlsoWorks) {
+  CArena arena;
+  CArray<double> c(arena, Shape{3}, 0.0);
+  c.data()[1] = 1.0;                                // only index 1 selects a
+  CArray<double> a(arena, Shape{3}, 5.0);
+  CArray<double> b(arena, Shape{3}, 6.0);
+  auto& n = where(c, a, b);
+  EXPECT_DOUBLE_EQ(n.data()[0], 6.0);
+  EXPECT_DOUBLE_EQ(n.data()[1], 5.0);
+  EXPECT_DOUBLE_EQ(n.data()[2], 6.0);
+}
+
+TEST(Where, CounterBumps) {
+  CArena arena;
+  VNode<double> a(arena, Shape{2}, 1.0);
+  VNode<double> b(arena, Shape{2}, 2.0);
+  CNode<double> c(arena, Shape{2}, 1.0);
+  graph_where(&c, &a, &b);
+  graph_where(&c, &a, &b);
+  EXPECT_EQ(arena.onode_where_count(), 2);
 }
 
 } // namespace

@@ -47,6 +47,7 @@ inline const char* op_name(Op op) {
     case Op::Softmax:             return "Softmax";
     case Op::CrossEntropy:        return "CrossEntropy";
     case Op::SoftmaxCrossEntropy: return "SoftmaxCrossEntropy";
+    case Op::Where:              return "Where";
     case Op::Exp:      return "Exp";
     case Op::Log:      return "Log";
     case Op::Sin:      return "Sin";
@@ -132,6 +133,10 @@ struct mermaid_writer {
           out << "  n" << r << " -->|R| n" << id << "\n";
         } else {
           out << "  n" << l << " --> n" << id << "\n";
+        }
+        if (o.cond()) {
+          const int c = visit(*o.cond());
+          out << "  n" << c << " -->|C| n" << id << "\n";
         }
         break;
       }
