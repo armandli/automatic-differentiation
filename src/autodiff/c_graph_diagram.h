@@ -48,6 +48,9 @@ inline const char* op_name(Op op) {
     case Op::CrossEntropy:        return "CrossEntropy";
     case Op::SoftmaxCrossEntropy: return "SoftmaxCrossEntropy";
     case Op::Where:              return "Where";
+    case Op::Reshape:   return "Reshape";
+    case Op::Squeeze:   return "Squeeze";
+    case Op::Unsqueeze: return "Unsqueeze";
     case Op::Exp:      return "Exp";
     case Op::Log:      return "Log";
     case Op::Sin:      return "Sin";

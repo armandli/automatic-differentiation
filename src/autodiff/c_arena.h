@@ -132,6 +132,9 @@ struct CArena {
   void note_onode_cross_entropy()         noexcept { ++mOnodeCrossEntropyCount; }
   void note_onode_softmax_cross_entropy() noexcept { ++mOnodeSoftmaxCrossEntropyCount; }
   void note_onode_where()    noexcept { ++mOnodeWhereCount; }
+  void note_onode_reshape()   noexcept { ++mOnodeReshapeCount; }
+  void note_onode_squeeze()   noexcept { ++mOnodeSqueezeCount; }
+  void note_onode_unsqueeze() noexcept { ++mOnodeUnsqueezeCount; }
   void note_onode_exp()      noexcept { ++mOnodeExpCount; }
   void note_onode_log()      noexcept { ++mOnodeLogCount; }
   void note_onode_sin()      noexcept { ++mOnodeSinCount; }
@@ -158,6 +161,9 @@ struct CArena {
   int64_t onode_cross_entropy_count()         const noexcept { return mOnodeCrossEntropyCount; }
   int64_t onode_softmax_cross_entropy_count() const noexcept { return mOnodeSoftmaxCrossEntropyCount; }
   int64_t onode_where_count()    const noexcept { return mOnodeWhereCount; }
+  int64_t onode_reshape_count()   const noexcept { return mOnodeReshapeCount; }
+  int64_t onode_squeeze_count()   const noexcept { return mOnodeSqueezeCount; }
+  int64_t onode_unsqueeze_count() const noexcept { return mOnodeUnsqueezeCount; }
   int64_t onode_exp_count()      const noexcept { return mOnodeExpCount; }
   int64_t onode_log_count()      const noexcept { return mOnodeLogCount; }
   int64_t onode_sin_count()      const noexcept { return mOnodeSinCount; }
@@ -189,6 +195,9 @@ private:
   int64_t mOnodeCrossEntropyCount        = 0;
   int64_t mOnodeSoftmaxCrossEntropyCount = 0;
   int64_t mOnodeWhereCount    = 0;
+  int64_t mOnodeReshapeCount   = 0;
+  int64_t mOnodeSqueezeCount   = 0;
+  int64_t mOnodeUnsqueezeCount = 0;
   int64_t mOnodeExpCount      = 0;
   int64_t mOnodeLogCount      = 0;
   int64_t mOnodeSinCount      = 0;

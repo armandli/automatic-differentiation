@@ -22,6 +22,7 @@ namespace s = std;
 
 enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
                 Softmax, CrossEntropy, SoftmaxCrossEntropy, Where,
+                Reshape, Squeeze, Unsqueeze,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -166,6 +167,9 @@ struct ONode : Node<T> {
       case Op::CrossEntropy:        arena.note_onode_cross_entropy();         break;
       case Op::SoftmaxCrossEntropy: arena.note_onode_softmax_cross_entropy(); break;
       case Op::Where:               arena.note_onode_where();                 break;
+      case Op::Reshape:   arena.note_onode_reshape();   break;
+      case Op::Squeeze:   arena.note_onode_squeeze();   break;
+      case Op::Unsqueeze: arena.note_onode_unsqueeze(); break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -406,6 +410,14 @@ ONode<T>& make_where(CArena& arena, Node<T>* cond, Node<T>* a, Node<T>* b) {
                                         a, b, -1, cond);
 }
 
+// Wrap an aliasing shape-view of `a` (produced by CArray<T>::reshape/squeeze/
+// unsqueeze, which Node<T> inherits) in an ONode. No allocation, no elementwise
+// loop: the view already shares `a`'s buffer, just under a different Shape.
+template <typename T>
+ONode<T>& make_reshape(CArena& arena, Op op, Node<T>* a, CArray<T>&& view) {
+  return arena.template adopt<ONode<T>>(arena, op, s::move(view), a, nullptr);
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -482,6 +494,24 @@ ONode<T>& graph_softmax_cross_entropy(Node<T>* logits, Node<T>* target,
 template <typename T>
 ONode<T>& graph_where(Node<T>* cond, Node<T>* a, Node<T>* b) {
   return detail::make_where(*a->arena(), cond, a, b);
+}
+
+// Shape-changing views, promoted to graph operators so a variable used both in
+// its original shape and through a reshaped/squeezed/unsqueezed view elsewhere
+// in the same graph still accumulates gradient correctly (see detail::make_reshape).
+template <typename T>
+ONode<T>& graph_reshape(Node<T>* a, const Shape& shape) {
+  return detail::make_reshape(*a->arena(), Op::Reshape, a, a->reshape(shape));
+}
+
+template <typename T>
+ONode<T>& graph_squeeze(Node<T>* a, int n) {
+  return detail::make_reshape(*a->arena(), Op::Squeeze, a, a->squeeze(n));
+}
+
+template <typename T>
+ONode<T>& graph_unsqueeze(Node<T>* a, int64_t axis) {
+  return detail::make_reshape(*a->arena(), Op::Unsqueeze, a, a->unsqueeze(axis));
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -779,6 +809,30 @@ auto& where(C&& cond, A&& a, B&& b) {
   return graph_where(&detail::to_node<T>(ar, s::forward<C>(cond)),
                      &detail::to_node<T>(ar, s::forward<A>(a)),
                      &detail::to_node<T>(ar, s::forward<B>(b)));
+}
+
+// reshape(x, shape) / squeeze(x, n) / unsqueeze(x, axis): shape-changing views
+// of a Node or CArray operand, ADL-resolved like the reductions. See
+// graph_reshape/graph_squeeze/graph_unsqueeze and detail::make_reshape.
+template <typename A>
+  requires detail::is_graph_operand<A>
+auto& reshape(A&& a, const Shape& shape) {
+  using T = typename s::remove_cvref_t<A>::value_type;
+  return graph_reshape(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), shape);
+}
+
+template <typename A>
+  requires detail::is_graph_operand<A>
+auto& squeeze(A&& a, int n) {
+  using T = typename s::remove_cvref_t<A>::value_type;
+  return graph_squeeze(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), n);
+}
+
+template <typename A>
+  requires detail::is_graph_operand<A>
+auto& unsqueeze(A&& a, int64_t axis) {
+  using T = typename s::remove_cvref_t<A>::value_type;
+  return graph_unsqueeze(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), axis);
 }
 
 // ---------------------------------------------------------------------------

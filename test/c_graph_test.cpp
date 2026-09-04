@@ -32,13 +32,16 @@ using autodiff::graph_mean;
 using autodiff::graph_min;
 using autodiff::graph_neg;
 using autodiff::graph_pow;
+using autodiff::graph_reshape;
 using autodiff::graph_softmax;
 using autodiff::graph_softmax_cross_entropy;
 using autodiff::graph_sum;
 using autodiff::graph_sin;
 using autodiff::graph_sqrt;
+using autodiff::graph_squeeze;
 using autodiff::graph_sub;
 using autodiff::graph_tan;
+using autodiff::graph_unsqueeze;
 using autodiff::graph_variable;
 using autodiff::graph_where;
 using autodiff::grad_of;
@@ -1323,6 +1326,69 @@ TEST(Where, CounterBumps) {
   graph_where(&c, &a, &b);
   graph_where(&c, &a, &b);
   EXPECT_EQ(arena.onode_where_count(), 2);
+}
+
+// ---------------------------------------------------------------------------
+//  Reshape / Squeeze / Unsqueeze — shape-changing views, promoted to operators
+// ---------------------------------------------------------------------------
+
+TEST(Reshape, ReinterpretsSameFlatBufferInRowMajorOrder) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                     // 1..6
+  auto& n = reshape(x, Shape{3, 2});
+  EXPECT_EQ(n.op(), Op::Reshape);
+  EXPECT_EQ(n.right(), nullptr);
+  EXPECT_EQ(n.shape(), (Shape{3, 2}));
+  for (int64_t i = 0; i < 6; ++i)
+    EXPECT_DOUBLE_EQ(n.data()[i], static_cast<double>(i) + 1.0);
+}
+
+TEST(Squeeze, DropsLeadingSizeOneDimensions) {
+  CArena arena;
+  CArray<double> x(arena, Shape{1, 3}, 0.0);
+  fill_iota(x);
+  auto& n = squeeze(x, 1);
+  EXPECT_EQ(n.op(), Op::Squeeze);
+  EXPECT_EQ(n.shape(), (Shape{3}));
+  EXPECT_DOUBLE_EQ(n.data()[0], 1.0);
+  EXPECT_DOUBLE_EQ(n.data()[2], 3.0);
+}
+
+TEST(Unsqueeze, InsertsSizeOneDimension) {
+  CArena arena;
+  CArray<double> x(arena, Shape{3}, 0.0);
+  fill_iota(x);
+  auto& n = unsqueeze(x, 0);
+  EXPECT_EQ(n.op(), Op::Unsqueeze);
+  EXPECT_EQ(n.shape(), (Shape{1, 3}));
+  EXPECT_DOUBLE_EQ((n[0, 1]), 2.0);
+}
+
+TEST(Reshape, PromotesCArrayOperand) {
+  CArena arena;
+  CArray<double> x(arena, Shape{4}, 2.0);
+  auto& n = reshape(x, Shape{2, 2});
+  EXPECT_EQ(n.left()->mKind, autodiff::NodeKind::Constant);
+  EXPECT_FALSE(n.requires_grad());
+
+  CArray<double> w(arena, Shape{4}, 2.0);
+  w.set_requires_grad();
+  auto& m = reshape(w, Shape{2, 2});
+  EXPECT_EQ(m.left()->mKind, autodiff::NodeKind::Variable);
+  EXPECT_TRUE(m.requires_grad());
+}
+
+TEST(Reshape, CounterBumpsPerOp) {
+  CArena arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0);
+  graph_reshape(&a, Shape{3, 2});
+  graph_reshape(&a, Shape{6});
+  graph_squeeze(&a, 1);
+  graph_unsqueeze(&a, 0);
+  EXPECT_EQ(arena.onode_reshape_count(), 2);
+  EXPECT_EQ(arena.onode_squeeze_count(), 1);
+  EXPECT_EQ(arena.onode_unsqueeze_count(), 1);
 }
 
 } // namespace

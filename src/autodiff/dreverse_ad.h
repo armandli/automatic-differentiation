@@ -342,6 +342,17 @@ GradList<T> ONode<T>::backward(const CArray<T>& adjoint) {
       out.emplace_back(mRight, s::move(gb));
       break;
     }
+
+    case Op::Reshape: case Op::Squeeze: case Op::Unsqueeze: {
+      // Same flat buffer, different Shape metadata — no element reordering, so
+      // the adjoint just gets copied back into mLeft's own shape. Zero-filled
+      // first because a -1-resolved reshape can shrink the visible extent
+      // (resolve_reshape), leaving the untouched tail of gin at zero.
+      CArray<T> gin(arena, mLeft->shape(), T{});
+      s::copy_n(pg, osz, gin.data());
+      out.emplace_back(mLeft, s::move(gin));
+      break;
+    }
   }
 
   return out;

@@ -29,12 +29,15 @@ using autodiff::graph_max;
 using autodiff::graph_mean;
 using autodiff::graph_min;
 using autodiff::graph_neg;
+using autodiff::graph_reshape;
 using autodiff::graph_sin;
 using autodiff::graph_softmax;
 using autodiff::graph_softmax_cross_entropy;
 using autodiff::graph_sqrt;
+using autodiff::graph_squeeze;
 using autodiff::graph_sum;
 using autodiff::graph_tan;
+using autodiff::graph_unsqueeze;
 using autodiff::graph_variable;
 using autodiff::graph_where;
 
@@ -434,6 +437,43 @@ TEST(ReverseSoftmaxCrossEntropy, GradientIsSoftmaxMinusOnehot) {
 }
 
 // ---------------------------------------------------------------------------
+//  reshape / squeeze / unsqueeze
+// ---------------------------------------------------------------------------
+
+TEST(ReverseReshape, ReshapeRoutesAdjointBackInOriginalShape) {
+  CArena arena;
+  CArray<double> xh = make_arr(arena, Shape{2, 3}, {1, 2, 3, 4, 5, 6});
+  auto& x = graph_variable(xh);
+  auto& r = graph_reshape(&x, Shape{3, 2});
+  CArray<double> seed = make_arr(arena, Shape{3, 2}, {1, 2, 3, 4, 5, 6});
+  backward(r, seed);
+  expect_near(grad_of(xh).data(), {1, 2, 3, 4, 5, 6});
+  EXPECT_EQ(grad_of(xh).shape(), (Shape{2, 3}));
+}
+
+TEST(ReverseReshape, SqueezeRoutesAdjointBackInOriginalShape) {
+  CArena arena;
+  CArray<double> xh = make_arr(arena, Shape{1, 3}, {1, 2, 3});
+  auto& x = graph_variable(xh);
+  auto& s = graph_squeeze(&x, 1);
+  CArray<double> seed = make_arr(arena, Shape{3}, {10, 20, 30});
+  backward(s, seed);
+  expect_near(grad_of(xh).data(), {10, 20, 30});
+  EXPECT_EQ(grad_of(xh).shape(), (Shape{1, 3}));
+}
+
+TEST(ReverseReshape, UnsqueezeRoutesAdjointBackInOriginalShape) {
+  CArena arena;
+  CArray<double> xh = make_arr(arena, Shape{3}, {1, 2, 3});
+  auto& x = graph_variable(xh);
+  auto& u = graph_unsqueeze(&x, 0);
+  CArray<double> seed = make_arr(arena, Shape{1, 3}, {10, 20, 30});
+  backward(u, seed);
+  expect_near(grad_of(xh).data(), {10, 20, 30});
+  EXPECT_EQ(grad_of(xh).shape(), (Shape{3}));
+}
+
+// ---------------------------------------------------------------------------
 //  where
 // ---------------------------------------------------------------------------
 
@@ -474,6 +514,23 @@ TEST(ReverseAccumulate, SharedLeafUsedTwice) {
   auto& loss = graph_sum(&(wh + wh));   // both operands promote to one node
   backward(loss);
   expect_near(grad_of(wh).data(), {2, 2, 2, 2});
+}
+
+TEST(ReverseAccumulate, VariableUsedDirectlyAndThroughReshapeAccumulates) {
+  // Before reshape/squeeze/unsqueeze were graph operators, a variable used
+  // both directly and through a reshaped view of the same buffer collided in
+  // the arena's pointer-keyed leaf cache (an assert in debug builds, silent
+  // wrong-shape reuse in release). As ONodes, this is an ordinary
+  // multi-consumer diamond, handled by the same accumulation as above.
+  CArena arena;
+  CArray<double> xh = make_arr(arena, Shape{2, 3}, {1, 2, 3, 4, 5, 6});
+  auto& x = graph_variable(xh);
+  auto& r = graph_reshape(&x, Shape{6});
+  auto& loss = graph_sum(&x) + graph_sum(&r);
+  backward(loss);
+  // d(sum(x))/dx = 1 everywhere; d(sum(reshape(x)))/dx = 1 everywhere too.
+  expect_near(grad_of(xh).data(), {2, 2, 2, 2, 2, 2});
+  EXPECT_EQ(grad_of(xh).shape(), (Shape{2, 3}));
 }
 
 // ---------------------------------------------------------------------------
