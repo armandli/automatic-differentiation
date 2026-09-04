@@ -42,6 +42,8 @@ using autodiff::graph_sqrt;
 using autodiff::graph_squeeze;
 using autodiff::graph_sub;
 using autodiff::graph_tan;
+using autodiff::cat;
+using autodiff::graph_cat;
 using autodiff::graph_permute;
 using autodiff::graph_transpose;
 using autodiff::graph_unsqueeze;
@@ -1504,6 +1506,114 @@ TEST(Permute, CounterBumpsPerOp) {
   graph_permute(&a, std::vector<int64_t>{1, 0, 2});
   graph_permute(&a, std::vector<int64_t>{2, 1, 0});
   EXPECT_EQ(arena.onode_permute_count(), before + 2);
+}
+
+// ---------------------------------------------------------------------------
+//  Cat — concatenate N inputs along an axis
+// ---------------------------------------------------------------------------
+
+TEST(Cat, CatAlongAxis0) {
+  CArena arena;
+  // a: [[1,2,3],[4,5,6]]  shape {2,3}
+  // b: [[7,8,9]]          shape {1,3}
+  // expected: [[1,2,3],[4,5,6],[7,8,9]]  shape {3,3}
+  CArray<double> ah(arena, Shape{2, 3}, 0.0);
+  CArray<double> bh(arena, Shape{1, 3}, 0.0);
+  fill_iota(ah);                          // 1..6
+  for (int64_t j = 0; j < 3; ++j) bh.data()[j] = static_cast<double>(7 + j);
+  auto& an = graph_constant(ah);
+  auto& bn = graph_constant(bh);
+  auto& n = graph_cat<double>({&an, &bn}, 0);
+  EXPECT_EQ(n.op(), Op::Cat);
+  EXPECT_EQ(n.shape(), (Shape{3, 3}));
+  EXPECT_EQ(n.left(), nullptr);
+  EXPECT_EQ(n.right(), nullptr);
+  EXPECT_EQ(n.inputs().size(), 2u);
+  EXPECT_DOUBLE_EQ((n[0, 0]), 1.0); EXPECT_DOUBLE_EQ((n[0, 1]), 2.0); EXPECT_DOUBLE_EQ((n[0, 2]), 3.0);
+  EXPECT_DOUBLE_EQ((n[1, 0]), 4.0); EXPECT_DOUBLE_EQ((n[1, 1]), 5.0); EXPECT_DOUBLE_EQ((n[1, 2]), 6.0);
+  EXPECT_DOUBLE_EQ((n[2, 0]), 7.0); EXPECT_DOUBLE_EQ((n[2, 1]), 8.0); EXPECT_DOUBLE_EQ((n[2, 2]), 9.0);
+}
+
+TEST(Cat, CatAlongAxis1) {
+  CArena arena;
+  // a: [[1,2],[3,4]]  shape {2,2}
+  // b: [[5,6,7],[8,9,10]]  shape {2,3}
+  // expected: shape {2,5}
+  CArray<double> ah(arena, Shape{2, 2}, 0.0);
+  CArray<double> bh(arena, Shape{2, 3}, 0.0);
+  fill_iota(ah);                          // 1..4
+  for (int64_t i = 0; i < 6; ++i) bh.data()[i] = static_cast<double>(5 + i);
+  auto& an = graph_constant(ah);
+  auto& bn = graph_constant(bh);
+  auto& n = graph_cat<double>({&an, &bn}, 1);
+  EXPECT_EQ(n.shape(), (Shape{2, 5}));
+  // row 0: [1,2,5,6,7]   row 1: [3,4,8,9,10]
+  EXPECT_DOUBLE_EQ((n[0, 0]), 1.0); EXPECT_DOUBLE_EQ((n[0, 2]), 5.0); EXPECT_DOUBLE_EQ((n[0, 4]), 7.0);
+  EXPECT_DOUBLE_EQ((n[1, 1]), 4.0); EXPECT_DOUBLE_EQ((n[1, 3]), 9.0); EXPECT_DOUBLE_EQ((n[1, 4]), 10.0);
+}
+
+TEST(Cat, CatThreeInputs) {
+  CArena arena;
+  CArray<double> a(arena, Shape{1, 2}, 1.0);
+  CArray<double> b(arena, Shape{1, 2}, 2.0);
+  CArray<double> c(arena, Shape{1, 2}, 3.0);
+  auto& an = graph_constant(a);
+  auto& bn = graph_constant(b);
+  auto& cn = graph_constant(c);
+  auto& n = graph_cat<double>({&an, &bn, &cn}, 0);
+  EXPECT_EQ(n.shape(), (Shape{3, 2}));
+  EXPECT_EQ(n.inputs().size(), 3u);
+  EXPECT_DOUBLE_EQ((n[0, 0]), 1.0);
+  EXPECT_DOUBLE_EQ((n[1, 0]), 2.0);
+  EXPECT_DOUBLE_EQ((n[2, 0]), 3.0);
+}
+
+TEST(Cat, CatNegativeAxis) {
+  CArena arena;
+  CArray<double> a(arena, Shape{2, 2}, 0.0);
+  CArray<double> b(arena, Shape{2, 3}, 0.0);
+  fill_iota(a); fill_iota(b);
+  auto& an = graph_constant(a);
+  auto& bn = graph_constant(b);
+  auto& pos = graph_cat<double>({&an, &bn}, 1);
+
+  CArray<double> a2(arena, Shape{2, 2}, 0.0);
+  CArray<double> b2(arena, Shape{2, 3}, 0.0);
+  fill_iota(a2); fill_iota(b2);
+  auto& an2 = graph_constant(a2);
+  auto& bn2 = graph_constant(b2);
+  auto& neg = graph_cat<double>({&an2, &bn2}, -1);
+
+  EXPECT_EQ(pos.shape(), neg.shape());
+  for (std::size_t i = 0; i < pos.size(); ++i)
+    EXPECT_DOUBLE_EQ(pos.data()[i], neg.data()[i]);
+}
+
+TEST(Cat, RequiresGradIfAnyInputDoes) {
+  CArena arena;
+  CArray<double> a(arena, Shape{2, 2}, 1.0);
+  CArray<double> b(arena, Shape{2, 2}, 2.0);
+  b.set_requires_grad();
+  auto& an = graph_constant(a);
+  auto& bn = cat<double>({&an, &graph_variable(b)}, 0);   // b is a variable
+  EXPECT_TRUE(bn.requires_grad());
+
+  CArray<double> c(arena, Shape{2, 2}, 3.0);
+  CArray<double> d(arena, Shape{2, 2}, 4.0);
+  auto& cn = graph_constant(c);
+  auto& dn = graph_constant(d);
+  auto& no_grad = graph_cat<double>({&cn, &dn}, 0);
+  EXPECT_FALSE(no_grad.requires_grad());
+}
+
+TEST(Cat, CounterBumpsPerOp) {
+  CArena arena;
+  VNode<double> a(arena, Shape{2, 3}, 1.0);
+  VNode<double> b(arena, Shape{2, 3}, 2.0);
+  const int64_t before = arena.onode_cat_count();
+  graph_cat<double>({&a, &b}, 0);
+  graph_cat<double>({&a, &b}, 1);
+  EXPECT_EQ(arena.onode_cat_count(), before + 2);
 }
 
 } // namespace

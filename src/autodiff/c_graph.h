@@ -22,7 +22,7 @@ namespace s = std;
 
 enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
                 Softmax, CrossEntropy, SoftmaxCrossEntropy, Where,
-                Reshape, Squeeze, Unsqueeze, Transpose, Permute,
+                Reshape, Squeeze, Unsqueeze, Transpose, Permute, Cat,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -147,13 +147,15 @@ struct ONode : Node<T> {
   int64_t  mAxis;
   Node<T>* mCond;
   s::vector<int64_t> mAxes;
+  s::vector<Node<T>*> mInputs;
 
   ONode(CArena& arena, Op op, CArray<T>&& result,
         Node<T>* left, Node<T>* right = nullptr, int64_t axis = -1,
-        Node<T>* cond = nullptr, s::vector<int64_t> axes = {})
+        Node<T>* cond = nullptr, s::vector<int64_t> axes = {},
+        s::vector<Node<T>*> inputs = {})
     : Node<T>(NodeKind::Operation, arena, s::move(result))
     , mOp(op), mLeft(left), mRight(right), mAxis(axis), mCond(cond)
-    , mAxes(s::move(axes))
+    , mAxes(s::move(axes)), mInputs(s::move(inputs))
   {
     switch (op) {
       case Op::Add:      arena.note_onode_add();      break;
@@ -175,6 +177,7 @@ struct ONode : Node<T> {
       case Op::Unsqueeze: arena.note_onode_unsqueeze(); break;
       case Op::Transpose: arena.note_onode_transpose(); break;
       case Op::Permute:   arena.note_onode_permute();   break;
+      case Op::Cat:       arena.note_onode_cat();       break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -184,8 +187,10 @@ struct ONode : Node<T> {
       case Op::Abs:      arena.note_onode_abs();      break;
       case Op::Pow:      arena.note_onode_pow();      break;
     }
-    this->set_requires_grad((mLeft  && mLeft->requires_grad()) ||
-                            (mRight && mRight->requires_grad()));
+    bool rg = (mLeft  && mLeft->requires_grad()) ||
+              (mRight && mRight->requires_grad());
+    for (auto* inp : mInputs) rg = rg || (inp && inp->requires_grad());
+    this->set_requires_grad(rg);
   }
 
   Op       op()    const noexcept { return mOp; }
@@ -193,7 +198,8 @@ struct ONode : Node<T> {
   Node<T>* right() const noexcept { return mRight; }
   int64_t  axis()  const noexcept { return mAxis; }
   Node<T>* cond()  const noexcept { return mCond; }
-  const s::vector<int64_t>& axes() const noexcept { return mAxes; }
+  const s::vector<int64_t>& axes()   const noexcept { return mAxes; }
+  const s::vector<Node<T>*>& inputs() const noexcept { return mInputs; }
 
   // Reverse pass: given the adjoint flowing in from downstream, return one
   // (input node, gradient) pair per differentiable input. No entry is produced
@@ -505,6 +511,56 @@ ONode<T>& make_permute(CArena& arena, Node<T>* a, s::vector<int64_t> axes) {
                                         a, nullptr, -1, nullptr, s::move(resolved));
 }
 
+// Concatenate N inputs along `axis` (negative allowed). All inputs must share
+// the same arena, rank, and shape on every axis except `axis`. The output
+// shape is the same as the inputs' except `output.shape[axis] = sum of
+// input[i].shape[axis]`. Allocates a fresh contiguous buffer and copies each
+// input's slice in row-major order; no stride tricks.
+template <typename T>
+ONode<T>& make_cat(CArena& arena, s::vector<Node<T>*> inputs, int64_t axis) {
+  assert(inputs.size() >= 2);
+  for (auto* inp : inputs) assert(inp->arena() == &arena);
+
+  const int64_t rank = static_cast<int64_t>(inputs[0]->rank());
+  int64_t ax = axis;
+  if (ax < 0) ax += rank;
+  assert(ax >= 0 and ax < rank);
+
+  int64_t total_axlen = 0;
+  for (auto* inp : inputs) {
+    assert(static_cast<int64_t>(inp->rank()) == rank);
+    for (int64_t d = 0; d < rank; ++d)
+      if (d != ax) assert(inp->shape()[d] == inputs[0]->shape()[d]);
+    total_axlen += inp->shape()[ax];
+  }
+
+  s::vector<int64_t> out_dims = inputs[0]->shape().dims();
+  out_dims[static_cast<s::size_t>(ax)] = total_axlen;
+
+  int64_t outer = 1, inner = 1;
+  for (int64_t d = 0;      d < ax;   ++d) outer *= inputs[0]->shape()[d];
+  for (int64_t d = ax + 1; d < rank; ++d) inner *= inputs[0]->shape()[d];
+
+  CArray<T> result(arena, Shape{out_dims});
+  T* pout = result.data();
+  int64_t offset = 0;
+  for (auto* inp : inputs) {
+    const int64_t axlen_i = inp->shape()[ax];
+    const T* pin = inp->data();
+    for (int64_t o = 0; o < outer; ++o)
+      for (int64_t k = 0; k < axlen_i; ++k)
+        for (int64_t j = 0; j < inner; ++j)
+          pout[o * total_axlen * inner + (offset + k) * inner + j] =
+            pin[o * axlen_i * inner + k * inner + j];
+    offset += axlen_i;
+  }
+
+  return arena.template adopt<ONode<T>>(arena, Op::Cat, s::move(result),
+                                        nullptr, nullptr, ax, nullptr,
+                                        s::vector<int64_t>{},
+                                        s::move(inputs));
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -615,6 +671,15 @@ ONode<T>& graph_transpose(Node<T>* a) {
 template <typename T>
 ONode<T>& graph_permute(Node<T>* a, s::vector<int64_t> axes) {
   return detail::make_permute(*a->arena(), a, s::move(axes));
+}
+
+// Concatenate N inputs along `axis` (negative allowed). All inputs must share
+// the same arena, rank, and every non-axis dimension. See detail::make_cat.
+template <typename T>
+ONode<T>& graph_cat(s::vector<Node<T>*> inputs, int64_t axis) {
+  assert(not inputs.empty());
+  CArena& arena = *inputs[0]->arena();    // evaluate before move
+  return detail::make_cat(arena, s::move(inputs), axis);
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -952,6 +1017,15 @@ template <typename A>
 auto& permute(A&& a, s::vector<int64_t> axes) {
   using T = typename s::remove_cvref_t<A>::value_type;
   return graph_permute(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), s::move(axes));
+}
+
+// cat(inputs, axis): concatenate a vector of Node<T>* along `axis` (negative
+// allowed). Inputs must all share the same arena, rank, and every non-axis
+// dimension. Node pointers are passed directly — no CArray promotion since
+// the variadic input list has no single natural promotion target.
+template <typename T>
+ONode<T>& cat(s::vector<Node<T>*> inputs, int64_t axis) {
+  return graph_cat(s::move(inputs), axis);
 }
 
 // ---------------------------------------------------------------------------

@@ -53,6 +53,7 @@ inline const char* op_name(Op op) {
     case Op::Unsqueeze: return "Unsqueeze";
     case Op::Transpose: return "Transpose";
     case Op::Permute:   return "Permute";
+    case Op::Cat:       return "Cat";
     case Op::Exp:      return "Exp";
     case Op::Log:      return "Log";
     case Op::Sin:      return "Sin";
@@ -140,20 +141,29 @@ struct mermaid_writer {
           else               out << " (all)";
         } else if (o.op() == Op::Permute) {
           out << " axes=" << axes_str(o.axes());
+        } else if (o.op() == Op::Cat) {
+          out << " axis=" << o.axis();
         }
         out << "<br/>" << shape_str(n.shape()) << "\"}}:::op\n";
 
-        const int l = visit(*o.left());
-        if (o.right()) {
-          const int r = visit(*o.right());
-          out << "  n" << l << " -->|L| n" << id << "\n";
-          out << "  n" << r << " -->|R| n" << id << "\n";
+        if (not o.inputs().empty()) {
+          for (auto* inp : o.inputs()) {
+            const int s = visit(*inp);
+            out << "  n" << s << " --> n" << id << "\n";
+          }
         } else {
-          out << "  n" << l << " --> n" << id << "\n";
-        }
-        if (o.cond()) {
-          const int c = visit(*o.cond());
-          out << "  n" << c << " -->|C| n" << id << "\n";
+          const int l = visit(*o.left());
+          if (o.right()) {
+            const int r = visit(*o.right());
+            out << "  n" << l << " -->|L| n" << id << "\n";
+            out << "  n" << r << " -->|R| n" << id << "\n";
+          } else {
+            out << "  n" << l << " --> n" << id << "\n";
+          }
+          if (o.cond()) {
+            const int c = visit(*o.cond());
+            out << "  n" << c << " -->|C| n" << id << "\n";
+          }
         }
         break;
       }

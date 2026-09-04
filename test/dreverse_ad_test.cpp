@@ -37,6 +37,7 @@ using autodiff::graph_sqrt;
 using autodiff::graph_squeeze;
 using autodiff::graph_sum;
 using autodiff::graph_tan;
+using autodiff::graph_cat;
 using autodiff::graph_permute;
 using autodiff::graph_transpose;
 using autodiff::graph_unsqueeze;
@@ -642,6 +643,66 @@ TEST(ReverseComposite, LinearThenSoftmaxCrossEntropy) {
   EXPECT_EQ(grad_of(bh).shape(), (Shape{2}));
   expect_near(grad_of(Wh).data(), numeric_grad(W0, loss_W), 1e-5);
   expect_near(grad_of(bh).data(), numeric_grad(b0, loss_b), 1e-5);
+}
+
+// ---------------------------------------------------------------------------
+//  non-scalar root via the explicit-seed overload
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+//  ReverseCat
+// ---------------------------------------------------------------------------
+
+TEST(ReverseCat, CatAlongAxis0RoutesAdjointToSlices) {
+  CArena arena;
+  // a: shape {2, 3}, b: shape {1, 3}  → cat axis 0 → {3, 3}
+  CArray<double> ah = make_arr(arena, Shape{2, 3}, {1, 2, 3, 4, 5, 6});
+  CArray<double> bh = make_arr(arena, Shape{1, 3}, {7, 8, 9});
+  auto& a = graph_variable(ah);
+  auto& b = graph_variable(bh);
+  auto& y = graph_cat<double>({&a, &b}, 0);
+  // seed = all ones so each grad slice equals the identity slice of seed
+  CArray<double> seed = make_arr(arena, Shape{3, 3},
+                                 {1, 1, 1, 1, 1, 1, 1, 1, 1});
+  backward(y, seed);
+  expect_near(grad_of(ah).data(), {1, 1, 1, 1, 1, 1});
+  expect_near(grad_of(bh).data(), {1, 1, 1});
+}
+
+TEST(ReverseCat, CatAlongAxis1RoutesAdjointToSlices) {
+  CArena arena;
+  // a: shape {2, 2}, b: shape {2, 3}  → cat axis 1 → {2, 5}
+  CArray<double> ah = make_arr(arena, Shape{2, 2}, {1, 2, 3, 4});
+  CArray<double> bh = make_arr(arena, Shape{2, 3}, {5, 6, 7, 8, 9, 10});
+  auto& a = graph_variable(ah);
+  auto& b = graph_variable(bh);
+  auto& y = graph_cat<double>({&a, &b}, 1);
+  CArray<double> seed = make_arr(arena, Shape{2, 5},
+                                 {10, 20, 30, 40, 50,
+                                  60, 70, 80, 90, 100});
+  backward(y, seed);
+  // a-grad = first 2 cols of each row
+  expect_near(grad_of(ah).data(), {10, 20, 60, 70});
+  // b-grad = last 3 cols of each row
+  expect_near(grad_of(bh).data(), {30, 40, 50, 80, 90, 100});
+}
+
+TEST(ReverseCat, ThreeInputCatAccumulates) {
+  CArena arena;
+  // three {1,2} tensors → cat axis 0 → {3,2}
+  CArray<double> ah = make_arr(arena, Shape{1, 2}, {1, 2});
+  CArray<double> bh = make_arr(arena, Shape{1, 2}, {3, 4});
+  CArray<double> ch = make_arr(arena, Shape{1, 2}, {5, 6});
+  auto& a = graph_variable(ah);
+  auto& b = graph_variable(bh);
+  auto& c = graph_variable(ch);
+  auto& y = graph_cat<double>({&a, &b, &c}, 0);
+  CArray<double> seed = make_arr(arena, Shape{3, 2},
+                                 {2, 3, 4, 5, 6, 7});
+  backward(y, seed);
+  expect_near(grad_of(ah).data(), {2, 3});
+  expect_near(grad_of(bh).data(), {4, 5});
+  expect_near(grad_of(ch).data(), {6, 7});
 }
 
 // ---------------------------------------------------------------------------

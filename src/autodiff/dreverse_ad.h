@@ -69,6 +69,7 @@ void rev_collect(Node<T>& n, s::unordered_set<Node<T>*>& seen,
     if (o.left())  rev_collect(*o.left(),  seen, order);
     if (o.right()) rev_collect(*o.right(), seen, order);
     if (o.cond())  rev_collect(*o.cond(),  seen, order);
+    for (auto* inp : o.inputs()) rev_collect(*inp, seen, order);
   }
   order.push_back(&n);
 }
@@ -348,6 +349,36 @@ CArray<T> grad_transpose(CArena& arena, const CArray<T>& adjoint, const s::vecto
   return permute(arena, adjoint, invert_perm(axes));
 }
 
+// cat's VJP: slice the adjoint back along `axis` to recover each input's
+// gradient. The adjoint has the concatenated shape; each input's slice is a
+// contiguous copy in row-major order (outer * axlen_i * inner elements).
+template <typename T>
+s::vector<CArray<T>> grad_cat(CArena& arena, const s::vector<Node<T>*>& inputs,
+                               int64_t axis, const CArray<T>& adjoint) {
+  const int64_t rank = static_cast<int64_t>(inputs[0]->rank());
+  int64_t outer = 1, inner = 1;
+  for (int64_t d = 0;        d < axis; ++d) outer *= inputs[0]->shape()[d];
+  for (int64_t d = axis + 1; d < rank; ++d) inner *= inputs[0]->shape()[d];
+  const int64_t total_axlen = adjoint.shape()[axis];
+  const T* pg = adjoint.data();
+  s::vector<CArray<T>> grads;
+  grads.reserve(inputs.size());
+  int64_t offset = 0;
+  for (auto* inp : inputs) {
+    const int64_t axlen_i = inp->shape()[axis];
+    CArray<T> gin(arena, inp->shape());
+    T* pi = gin.data();
+    for (int64_t o = 0; o < outer; ++o)
+      for (int64_t k = 0; k < axlen_i; ++k)
+        for (int64_t j = 0; j < inner; ++j)
+          pi[o * axlen_i * inner + k * inner + j] =
+            pg[o * total_axlen * inner + (offset + k) * inner + j];
+    offset += axlen_i;
+    grads.push_back(s::move(gin));
+  }
+  return grads;
+}
+
 } // detail
 
 // ---------------------------------------------------------------------------
@@ -370,7 +401,7 @@ void CNode<T>::backward(const CArray<T>&) {}
 // ---------------------------------------------------------------------------
 template <typename T>
 GradList<T> ONode<T>::backward(const CArray<T>& adjoint) {
-  assert(mLeft != nullptr);
+  assert(mLeft != nullptr or not mInputs.empty());
   assert(adjoint.shape() == this->shape());
   CArena& arena = *this->arena();
   GradList<T> out;
@@ -461,6 +492,13 @@ GradList<T> ONode<T>::backward(const CArray<T>& adjoint) {
     case Op::Permute:
       out.emplace_back(mLeft, detail::grad_transpose(arena, adjoint, mAxes));
       break;
+
+    case Op::Cat: {
+      auto grads = detail::grad_cat(arena, mInputs, mAxis, adjoint);
+      for (s::size_t i = 0; i < mInputs.size(); ++i)
+        out.emplace_back(mInputs[i], s::move(grads[i]));
+      break;
+    }
   }
 
   return out;

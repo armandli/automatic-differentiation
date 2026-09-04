@@ -17,6 +17,7 @@ using autodiff::CArray;
 using autodiff::Node;
 using autodiff::Shape;
 using autodiff::VNode;
+using autodiff::cat;
 using autodiff::create_diagram;
 using autodiff::write_mermaid;
 
@@ -212,6 +213,18 @@ TEST(GraphDiagram, WhereHasThreeLabeledEdges) {
   EXPECT_EQ(count_substr(m, "-->|L|"), 1);   // a
   EXPECT_EQ(count_substr(m, "-->|R|"), 1);   // b
   EXPECT_EQ(count_substr(m, "-->|C|"), 1);   // cond
+}
+
+TEST(GraphDiagram, CatLabelShowsAxisAndShape) {
+  CArena arena;
+  CArray<double> a(arena, Shape{2, 2}, 1.0);
+  CArray<double> b(arena, Shape{2, 2}, 2.0);
+  auto& n = cat<double>({&graph_variable(a), &graph_variable(b)}, 0);
+  const std::string m = mermaid_of(n);
+  EXPECT_TRUE(contains(m, "\"Cat axis=0<br/>(4, 2)\""));
+  // two unlabeled edges from inputs (no |L| or |R|)
+  EXPECT_EQ(count_substr(m, " --> n"), 2);
+  EXPECT_EQ(count_substr(m, "-->|"), 0);
 }
 
 } // namespace
