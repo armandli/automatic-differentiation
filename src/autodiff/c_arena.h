@@ -136,6 +136,7 @@ struct CArena {
   void note_onode_squeeze()   noexcept { ++mOnodeSqueezeCount; }
   void note_onode_unsqueeze() noexcept { ++mOnodeUnsqueezeCount; }
   void note_onode_transpose() noexcept { ++mOnodeTransposeCount; }
+  void note_onode_permute()   noexcept { ++mOnodePermuteCount; }
   void note_onode_exp()      noexcept { ++mOnodeExpCount; }
   void note_onode_log()      noexcept { ++mOnodeLogCount; }
   void note_onode_sin()      noexcept { ++mOnodeSinCount; }
@@ -166,6 +167,7 @@ struct CArena {
   int64_t onode_squeeze_count()   const noexcept { return mOnodeSqueezeCount; }
   int64_t onode_unsqueeze_count() const noexcept { return mOnodeUnsqueezeCount; }
   int64_t onode_transpose_count() const noexcept { return mOnodeTransposeCount; }
+  int64_t onode_permute_count()   const noexcept { return mOnodePermuteCount; }
   int64_t onode_exp_count()      const noexcept { return mOnodeExpCount; }
   int64_t onode_log_count()      const noexcept { return mOnodeLogCount; }
   int64_t onode_sin_count()      const noexcept { return mOnodeSinCount; }
@@ -201,6 +203,7 @@ private:
   int64_t mOnodeSqueezeCount   = 0;
   int64_t mOnodeUnsqueezeCount = 0;
   int64_t mOnodeTransposeCount = 0;
+  int64_t mOnodePermuteCount  = 0;
   int64_t mOnodeExpCount      = 0;
   int64_t mOnodeLogCount      = 0;
   int64_t mOnodeSinCount      = 0;

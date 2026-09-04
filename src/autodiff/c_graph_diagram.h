@@ -52,6 +52,7 @@ inline const char* op_name(Op op) {
     case Op::Squeeze:   return "Squeeze";
     case Op::Unsqueeze: return "Unsqueeze";
     case Op::Transpose: return "Transpose";
+    case Op::Permute:   return "Permute";
     case Op::Exp:      return "Exp";
     case Op::Log:      return "Log";
     case Op::Sin:      return "Sin";
@@ -137,7 +138,7 @@ struct mermaid_writer {
             o.op() == Op::CrossEntropy or o.op() == Op::SoftmaxCrossEntropy) {
           if (o.axis() >= 0) out << " axis=" << o.axis();
           else               out << " (all)";
-        } else if (o.op() == Op::Transpose) {
+        } else if (o.op() == Op::Permute) {
           out << " axes=" << axes_str(o.axes());
         }
         out << "<br/>" << shape_str(n.shape()) << "\"}}:::op\n";

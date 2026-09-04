@@ -37,6 +37,7 @@ using autodiff::graph_sqrt;
 using autodiff::graph_squeeze;
 using autodiff::graph_sum;
 using autodiff::graph_tan;
+using autodiff::graph_permute;
 using autodiff::graph_transpose;
 using autodiff::graph_unsqueeze;
 using autodiff::graph_variable;
@@ -490,7 +491,11 @@ TEST(ReverseTranspose, MatrixTransposeRoutesAdjointBackViaInversePermutation) {
   EXPECT_EQ(grad_of(xh).shape(), (Shape{2, 3}));
 }
 
-TEST(ReverseTranspose, RankThreePermutationRoutesAdjointViaInverseAxes) {
+// ---------------------------------------------------------------------------
+//  permute
+// ---------------------------------------------------------------------------
+
+TEST(ReversePermute, RankThreePermutationRoutesAdjointViaInverseAxes) {
   // A non-self-inverse permutation (axes={1,2,0}, inverse={2,0,1}) so the
   // backward rule's invert_perm is actually exercised, not just axes=[1,0]
   // where the permutation happens to be its own inverse.
@@ -500,7 +505,7 @@ TEST(ReverseTranspose, RankThreePermutationRoutesAdjointViaInverseAxes) {
   for (std::size_t i = 0; i < sv.size(); ++i) sv[i] = static_cast<double>(i) + 1.0;
   CArray<double> xh = make_arr(arena, Shape{2, 3, 4}, xv);
   auto& x = graph_variable(xh);
-  auto& t = graph_transpose(&x, std::vector<int64_t>{1, 2, 0});   // shape (3,4,2)
+  auto& t = graph_permute(&x, std::vector<int64_t>{1, 2, 0});   // shape (3,4,2)
   EXPECT_EQ(t.shape(), (Shape{3, 4, 2}));
   CArray<double> seed = make_arr(arena, Shape{3, 4, 2}, sv);
   backward(t, seed);

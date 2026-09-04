@@ -22,7 +22,7 @@ namespace s = std;
 
 enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
                 Softmax, CrossEntropy, SoftmaxCrossEntropy, Where,
-                Reshape, Squeeze, Unsqueeze, Transpose,
+                Reshape, Squeeze, Unsqueeze, Transpose, Permute,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -174,6 +174,7 @@ struct ONode : Node<T> {
       case Op::Squeeze:   arena.note_onode_squeeze();   break;
       case Op::Unsqueeze: arena.note_onode_unsqueeze(); break;
       case Op::Transpose: arena.note_onode_transpose(); break;
+      case Op::Permute:   arena.note_onode_permute();   break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -487,10 +488,20 @@ CArray<T> permute(CArena& arena, const CArray<T>& in, const s::vector<int64_t>& 
 }
 
 template <typename T>
-ONode<T>& make_transpose(CArena& arena, Node<T>* a, s::vector<int64_t> axes) {
+ONode<T>& make_transpose(CArena& arena, Node<T>* a) {
+  const int64_t rank = static_cast<int64_t>(a->rank());
+  s::vector<int64_t> axes(static_cast<s::size_t>(rank));
+  for (int64_t i = 0; i < rank; ++i) axes[static_cast<s::size_t>(i)] = rank - 1 - i;
+  CArray<T> result = permute(arena, static_cast<const CArray<T>&>(*a), axes);
+  return arena.template adopt<ONode<T>>(arena, Op::Transpose, s::move(result),
+                                        a, nullptr, -1, nullptr, s::move(axes));
+}
+
+template <typename T>
+ONode<T>& make_permute(CArena& arena, Node<T>* a, s::vector<int64_t> axes) {
   s::vector<int64_t> resolved = resolve_transpose_axes(static_cast<int64_t>(a->rank()), s::move(axes));
   CArray<T> result = permute(arena, static_cast<const CArray<T>&>(*a), resolved);
-  return arena.template adopt<ONode<T>>(arena, Op::Transpose, s::move(result),
+  return arena.template adopt<ONode<T>>(arena, Op::Permute, s::move(result),
                                         a, nullptr, -1, nullptr, s::move(resolved));
 }
 
@@ -590,14 +601,20 @@ ONode<T>& graph_unsqueeze(Node<T>* a, int64_t axis) {
   return detail::make_reshape(*a->arena(), Op::Unsqueeze, a, a->unsqueeze(axis));
 }
 
-// General N-D axis permutation: out.shape()[i] == a->shape()[axes[i]]. An empty
-// `axes` (the default) reverses every axis, matching numpy's default transpose.
-// Unlike reshape/squeeze/unsqueeze this is never a zero-copy view — CArray has
-// no stride support, so it always allocates and physically reorders the
-// elements (see detail::permute).
+// Reverse all axes — the classic matrix transpose for rank-2, generalised to
+// N-D. Unlike reshape/squeeze/unsqueeze this always allocates and physically
+// reorders elements (see detail::permute).
 template <typename T>
-ONode<T>& graph_transpose(Node<T>* a, s::vector<int64_t> axes = {}) {
-  return detail::make_transpose(*a->arena(), a, s::move(axes));
+ONode<T>& graph_transpose(Node<T>* a) {
+  return detail::make_transpose(*a->arena(), a);
+}
+
+// General N-D axis permutation: out.shape()[i] == a->shape()[axes[i]].
+// Negative entries are normalised; axes must be a genuine permutation of
+// [0, rank). Like transpose, always allocates a fresh buffer.
+template <typename T>
+ONode<T>& graph_permute(Node<T>* a, s::vector<int64_t> axes) {
+  return detail::make_permute(*a->arena(), a, s::move(axes));
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -900,8 +917,8 @@ auto& where(C&& cond, A&& a, B&& b) {
 // reshape(x, shape) / squeeze(x, n) / unsqueeze(x, axis): shape-changing views
 // of a Node or CArray operand, ADL-resolved like the reductions. See
 // graph_reshape/graph_squeeze/graph_unsqueeze and detail::make_reshape.
-// transpose(x, axes) is similar in spirit but, unlike its neighbors here, is
-// never a zero-copy view (see graph_transpose).
+// transpose(x) and permute(x, axes) are similar in spirit but, unlike their
+// neighbors here, are never zero-copy views (see graph_transpose/graph_permute).
 template <typename A>
   requires detail::is_graph_operand<A>
 auto& reshape(A&& a, const Shape& shape) {
@@ -925,9 +942,16 @@ auto& unsqueeze(A&& a, int64_t axis) {
 
 template <typename A>
   requires detail::is_graph_operand<A>
-auto& transpose(A&& a, s::vector<int64_t> axes = {}) {
+auto& transpose(A&& a) {
   using T = typename s::remove_cvref_t<A>::value_type;
-  return graph_transpose(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), s::move(axes));
+  return graph_transpose(&detail::to_node<T>(*a.arena(), s::forward<A>(a)));
+}
+
+template <typename A>
+  requires detail::is_graph_operand<A>
+auto& permute(A&& a, s::vector<int64_t> axes) {
+  using T = typename s::remove_cvref_t<A>::value_type;
+  return graph_permute(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), s::move(axes));
 }
 
 // ---------------------------------------------------------------------------

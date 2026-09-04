@@ -458,6 +458,7 @@ GradList<T> ONode<T>::backward(const CArray<T>& adjoint) {
       break;
 
     case Op::Transpose:
+    case Op::Permute:
       out.emplace_back(mLeft, detail::grad_transpose(arena, adjoint, mAxes));
       break;
   }

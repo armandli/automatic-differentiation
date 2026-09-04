@@ -118,14 +118,24 @@ TEST(GraphDiagram, ReductionLabelShowsAxis) {
   EXPECT_TRUE(contains(mermaid_of(softmax(t)), "\"Softmax (all)<br/>(2, 3)\""));
 }
 
-TEST(GraphDiagram, TransposeLabelShowsAxes) {
+TEST(GraphDiagram, TransposeLabelShowsNoAxes) {
   CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 1.0);
-  EXPECT_TRUE(contains(mermaid_of(transpose(x)), "\"Transpose axes=[1,0]<br/>(3, 2)\""));
+  EXPECT_TRUE(contains(mermaid_of(transpose(x)), "\"Transpose<br/>(3, 2)\""));
 
   CArray<double> y(arena, Shape{2, 3, 4}, 1.0);
-  EXPECT_TRUE(contains(mermaid_of(transpose(y, std::vector<int64_t>{1, 2, 0})),
-                       "\"Transpose axes=[1,2,0]<br/>(3, 4, 2)\""));
+  EXPECT_TRUE(contains(mermaid_of(transpose(y)), "\"Transpose<br/>(4, 3, 2)\""));
+}
+
+TEST(GraphDiagram, PermuteLabelShowsAxes) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2, 3}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(permute(x, std::vector<int64_t>{1, 0})),
+                       "\"Permute axes=[1,0]<br/>(3, 2)\""));
+
+  CArray<double> y(arena, Shape{2, 3, 4}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(permute(y, std::vector<int64_t>{1, 2, 0})),
+                       "\"Permute axes=[1,2,0]<br/>(3, 4, 2)\""));
 }
 
 TEST(GraphDiagram, CrossEntropyIsBinarySoftmaxIsUnary) {
