@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -16,7 +17,7 @@ namespace s = std;
 // ---------------------------------------------------------------------------
 //  NodeKind / NodeBase: the non-template identity+lifetime base for every
 //  graph node (Node<T> and its subclasses in c_graph.h). Nodes are heap
-//  objects owned by a CArena<T> (adopt()), never copied, and destroyed
+//  objects owned by a CArena (adopt()), never copied, and destroyed
 //  polymorphically through this base when the arena dies. NodeKind lets a
 //  later reverse pass discriminate leaves from operations without an RTTI
 //  round-trip.
@@ -35,16 +36,19 @@ struct NodeBase {
 };
 
 // ---------------------------------------------------------------------------
-//  CArena<T>: the sole owner of every numeric T-buffer used by CArray<T> and
-//  of every graph node built on it. allocate() carves a fresh block, records
-//  it, and returns a non-owning pointer valid until ~CArena, which frees every
-//  block at once. adopt<N>() constructs a node on the heap, takes ownership,
-//  and returns a reference stable for the arena's life. CArray<T> is a stack
-//  value handle into these blocks; the arena, declared first in a scope, must
-//  outlive everything built on it.
+//  CArena: the sole owner of every numeric buffer used by CArray<T> and of
+//  every graph node built on it. It is NOT templated — one arena can own
+//  buffers of many element types at once (float and bool and int …), so a
+//  CArray<float> and a CArray<bool> can coexist and feed the same operator.
+//  allocate<T>() carves a fresh T-block, type-erases the owning pointer, and
+//  returns a non-owning T* valid until ~CArena, which frees every block at
+//  once. adopt<N>() constructs a node on the heap, takes ownership, and returns
+//  a reference stable for the arena's life. CArray<T> is a stack value handle
+//  into these blocks; the arena, declared first in a scope, must outlive
+//  everything built on it.
 //
-//  The arena is pinned: CArray<T> keeps a CArena<T>* back-pointer, so a move
-//  of the arena would dangle every array — copy and move are deleted.
+//  The arena is pinned: CArray<T> keeps a CArena* back-pointer, so a move of
+//  the arena would dangle every array — copy and move are deleted.
 //
 //  Counting lives here too: one note_* call per buffer-bearing object built on
 //  the arena, plus carray_count() for every allocate(). Single-threaded (one
@@ -56,7 +60,6 @@ struct NodeBase {
 //  a scratchpad. Reusing one arena across many forward passes (a training
 //  loop) grows it without bound; use a fresh arena per pass for now.
 // ---------------------------------------------------------------------------
-template <typename T>
 struct CArena {
   CArena() = default;
   ~CArena() = default;
@@ -66,13 +69,19 @@ struct CArena {
   CArena(CArena&&) = delete;
   CArena& operator=(CArena&&) = delete;
 
-  // Carve n elements, each set to init. Returns a non-owning pointer valid
-  // until ~CArena. Counts as one CArray allocation.
+  // Carve n elements of any fundamental arithmetic type, each set to init.
+  // Returns a non-owning T* valid until ~CArena. The owning pointer is stored
+  // type-erased (a per-T deleter runs the right delete[]). Counts as one CArray
+  // allocation.
+  template <typename T>
   T* allocate(s::size_t n, T init = T{}) {
+    static_assert(s::is_arithmetic_v<T>,
+                  "CArena buffers hold fundamental arithmetic types only");
     auto block = s::make_unique_for_overwrite<T[]>(n);
     T* raw = block.get();
     s::fill_n(raw, n, init);
-    mBuffers.push_back(s::move(block));
+    mBuffers.push_back(s::unique_ptr<void, void(*)(void*)>(
+      block.release(), [](void* p) { delete[] static_cast<T*>(p); }));
     ++mCarrayCount;
     return raw;
   }
@@ -89,12 +98,13 @@ struct CArena {
   }
 
   // Canonical leaf node a CArray buffer promoted to, or nullptr. Keyed by the
-  // buffer pointer, which CArena never frees mid-life, so the key stays valid.
-  NodeBase* promoted_leaf(const T* key) const {
+  // buffer pointer (type-erased), which CArena never frees mid-life, so the key
+  // stays valid. Callers pass a `const T*` that decays to `const void*`.
+  NodeBase* promoted_leaf(const void* key) const {
     auto it = mPromoted.find(key);
     return it == mPromoted.end() ? nullptr : it->second;
   }
-  void register_leaf(const T* key, NodeBase* node) { mPromoted.emplace(key, node); }
+  void register_leaf(const void* key, NodeBase* node) { mPromoted.emplace(key, node); }
 
   // Default requires_grad for CArray<T>s allocated from this arena; each picks it
   // up at construction unless it passes an explicit flag. Off by default.
@@ -156,9 +166,9 @@ struct CArena {
   int64_t onode_pow_count()      const noexcept { return mOnodePowCount; }
 
 private:
-  s::vector<s::unique_ptr<T[]>>         mBuffers;
-  s::vector<s::unique_ptr<NodeBase>>    mNodes;      // destroyed before mBuffers
-  s::unordered_map<const T*, NodeBase*> mPromoted;   // CArray buffer -> canonical leaf
+  s::vector<s::unique_ptr<void, void(*)(void*)>> mBuffers;   // type-erased owners
+  s::vector<s::unique_ptr<NodeBase>>             mNodes;     // destroyed before mBuffers
+  s::unordered_map<const void*, NodeBase*>       mPromoted;  // CArray buffer -> canonical leaf
   bool    mAutoRequiresGrad   = false;
   int64_t mCarrayCount        = 0;
   int64_t mVnodeCount         = 0;

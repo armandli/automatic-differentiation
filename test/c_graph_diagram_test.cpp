@@ -39,7 +39,7 @@ bool contains(const std::string& hay, const std::string& needle) {
 // ---------------------------------------------------------------------------
 
 TEST(GraphDiagram, HeaderHasFlowchartAndClassDefs) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 1.0);
   auto& n = x + x;
   const std::string m = mermaid_of(n);
@@ -51,7 +51,7 @@ TEST(GraphDiagram, HeaderHasFlowchartAndClassDefs) {
 }
 
 TEST(GraphDiagram, LinearExpressionNodesAndEdges) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> w(arena, Shape{3}, 0.5);
   w.set_requires_grad();
   CArray<double> x(arena, Shape{3}, 2.0);
@@ -71,7 +71,7 @@ TEST(GraphDiagram, LinearExpressionNodesAndEdges) {
 }
 
 TEST(GraphDiagram, SharedSubexpressionDrawnOnce) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2}, 3.0);
   x.set_requires_grad();
   auto& sq = x * x;
@@ -86,7 +86,7 @@ TEST(GraphDiagram, SharedSubexpressionDrawnOnce) {
 }
 
 TEST(GraphDiagram, UnaryOpEdgeIsUnlabeled) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 0.5);
   auto& n = exp(x);
   const std::string m = mermaid_of(n);
@@ -96,7 +96,7 @@ TEST(GraphDiagram, UnaryOpEdgeIsUnlabeled) {
 }
 
 TEST(GraphDiagram, ReductionLabelShowsAxis) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 1.0);
   EXPECT_TRUE(contains(mermaid_of(sum(x, 1)), "\"Sum axis=1<br/>(2)\""));
 
@@ -117,7 +117,7 @@ TEST(GraphDiagram, ReductionLabelShowsAxis) {
 }
 
 TEST(GraphDiagram, CrossEntropyIsBinarySoftmaxIsUnary) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> p(arena, Shape{2, 3}, 0.3);
   CArray<double> y(arena, Shape{2}, 0.0);
   const std::string ce = mermaid_of(cross_entropy(p, y, 1));
@@ -131,14 +131,14 @@ TEST(GraphDiagram, CrossEntropyIsBinarySoftmaxIsUnary) {
 }
 
 TEST(GraphDiagram, ConstantScalarShowsValue) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 1.0);
   auto& n = x + 2.0;
   EXPECT_TRUE(contains(mermaid_of(n), " = 2<br/>(1)"));
 }
 
 TEST(GraphDiagram, CustomNameIsEscaped) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{2}, "L<R>&\"q\"", 1.0);
   const std::string m = mermaid_of(v);
   EXPECT_TRUE(contains(m, "L&lt;R&gt;&amp;&quot;q&quot;"));
@@ -146,7 +146,7 @@ TEST(GraphDiagram, CustomNameIsEscaped) {
 }
 
 TEST(GraphDiagram, CreateDiagramRoundTrips) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{2}, 1.0);
   CArray<double> b(arena, Shape{2}, 2.0);
   auto& y = a * b - 1.0;
@@ -160,6 +160,23 @@ TEST(GraphDiagram, CreateDiagramRoundTrips) {
   buf << in.rdbuf();
   EXPECT_FALSE(buf.str().empty());
   EXPECT_EQ(buf.str(), mermaid_of(y));
+}
+
+TEST(GraphDiagram, MixedTypeGraphRendersConvertedOperandAsConstant) {
+  CArena arena;
+  CArray<float> x(arena, Shape{2, 2}, 1.0f);
+  x.set_requires_grad();
+  CArray<bool> mask(arena, Shape{2, 2}, true);
+  auto& y = x * mask;                      // bool operand converts to a const leaf
+
+  std::ostringstream os;
+  write_mermaid(os, y);
+  const std::string m = os.str();
+  EXPECT_TRUE(contains(m, "\"Hadamard<br/>(2, 2)\""));
+  EXPECT_TRUE(contains(m, "]:::const\n"));   // the converted mask
+  EXPECT_TRUE(contains(m, "]):::var\n"));    // the float variable
+  EXPECT_EQ(count_substr(m, "-->|L|"), 1);
+  EXPECT_EQ(count_substr(m, "-->|R|"), 1);
 }
 
 } // namespace

@@ -18,49 +18,49 @@ struct Dummy : NodeBase {
 };
 
 TEST(CArena, AllocateReturnsDistinctNonNull) {
-  CArena<double> arena;
-  double* a = arena.allocate(4);
-  double* b = arena.allocate(4);
+  CArena arena;
+  double* a = arena.allocate<double>(4);
+  double* b = arena.allocate<double>(4);
   EXPECT_NE(a, nullptr);
   EXPECT_NE(b, nullptr);
   EXPECT_NE(a, b);
 }
 
 TEST(CArena, AllocateFillsInitValue) {
-  CArena<double> arena;
-  double* p = arena.allocate(3, 7.0);
+  CArena arena;
+  double* p = arena.allocate<double>(3, 7.0);
   for (int64_t i = 0; i < 3; ++i)
     EXPECT_DOUBLE_EQ(p[i], 7.0);
 }
 
 TEST(CArena, AllocateDefaultZeroInitializes) {
-  CArena<double> arena;
-  double* p = arena.allocate(3);
+  CArena arena;
+  double* p = arena.allocate<double>(3);
   for (int64_t i = 0; i < 3; ++i)
     EXPECT_DOUBLE_EQ(p[i], 0.0);
 }
 
 TEST(CArena, AllocateOfZeroIsHarmless) {
-  CArena<double> arena;
-  double* p = arena.allocate(0);
+  CArena arena;
+  double* p = arena.allocate<double>(0);
   (void)p;
   EXPECT_EQ(arena.carray_count(), 1);
 }
 
 TEST(CArena, CarrayCountBumpsPerAllocate) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.carray_count(), 0);
-  arena.allocate(2);
+  arena.allocate<double>(2);
   EXPECT_EQ(arena.carray_count(), 1);
-  arena.allocate(8);
+  arena.allocate<double>(8);
   EXPECT_EQ(arena.carray_count(), 2);
 }
 
 TEST(CArena, BuffersStayValidWhileArenaAlive) {
-  CArena<double> arena;
+  CArena arena;
   double* blocks[16];
   for (int64_t k = 0; k < 16; ++k) {
-    blocks[k] = arena.allocate(4);
+    blocks[k] = arena.allocate<double>(4);
     blocks[k][0] = static_cast<double>(k);
   }
   // Later allocations must not disturb earlier blocks.
@@ -69,15 +69,15 @@ TEST(CArena, BuffersStayValidWhileArenaAlive) {
 }
 
 TEST(CArena, NonCopyableNonMovable) {
-  static_assert(not std::is_copy_constructible_v<CArena<double>>);
-  static_assert(not std::is_copy_assignable_v<CArena<double>>);
-  static_assert(not std::is_move_constructible_v<CArena<double>>);
-  static_assert(not std::is_move_assignable_v<CArena<double>>);
+  static_assert(not std::is_copy_constructible_v<CArena>);
+  static_assert(not std::is_copy_assignable_v<CArena>);
+  static_assert(not std::is_move_constructible_v<CArena>);
+  static_assert(not std::is_move_assignable_v<CArena>);
   SUCCEED();
 }
 
 TEST(CArena, NoteCountersStartAtZero) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.vnode_count(), 0);
   EXPECT_EQ(arena.cnode_count(), 0);
   EXPECT_EQ(arena.onode_add_count(), 0);
@@ -85,7 +85,7 @@ TEST(CArena, NoteCountersStartAtZero) {
 }
 
 TEST(CArena, NoteCountersIncrementIndependently) {
-  CArena<double> arena;
+  CArena arena;
   arena.note_vnode();
   arena.note_vnode();
   arena.note_cnode();
@@ -103,23 +103,43 @@ TEST(CArena, NoteCountersIncrementIndependently) {
   EXPECT_EQ(arena.onode_hadamard_count(), 0);
 }
 
-TEST(CArena, IntTypeParameterWorks) {
-  CArena<int> arena;
-  int* p = arena.allocate(4, -1);
+TEST(CArena, AllocatesNonDoubleBuffers) {
+  CArena arena;
+  int* p = arena.allocate<int>(4, -1);
   for (int64_t i = 0; i < 4; ++i)
     EXPECT_EQ(p[i], -1);
   EXPECT_EQ(arena.carray_count(), 1);
 }
 
+TEST(CArena, HoldsMultipleElementTypes) {
+  CArena arena;
+  double*    d = arena.allocate<double>(4, 1.5);
+  int*       i = arena.allocate<int>(3, -2);
+  bool*      b = arena.allocate<bool>(2, true);
+  short*     s = arena.allocate<short>(2, 7);
+  long long* l = arena.allocate<long long>(2, 1LL << 40);
+  char*      c = arena.allocate<char>(2, 'z');
+
+  EXPECT_NE(static_cast<void*>(d), static_cast<void*>(i));
+  EXPECT_NE(static_cast<void*>(i), static_cast<void*>(b));
+  EXPECT_DOUBLE_EQ(d[3], 1.5);
+  EXPECT_EQ(i[0], -2);
+  EXPECT_TRUE(b[1]);
+  EXPECT_EQ(s[1], 7);
+  EXPECT_EQ(l[0], 1LL << 40);
+  EXPECT_EQ(c[1], 'z');
+  EXPECT_EQ(arena.carray_count(), 6);
+}
+
 TEST(CArena, NegCounterStartsAtZero) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.onode_neg_count(), 0);
   arena.note_onode_neg();
   EXPECT_EQ(arena.onode_neg_count(), 1);
 }
 
 TEST(CArena, ReductionCountersIncrementIndependently) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.onode_sum_count(), 0);
   EXPECT_EQ(arena.onode_mean_count(), 0);
   EXPECT_EQ(arena.onode_max_count(), 0);
@@ -135,7 +155,7 @@ TEST(CArena, ReductionCountersIncrementIndependently) {
 }
 
 TEST(CArena, NeuralOpCountersIncrementIndependently) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.onode_softmax_count(), 0);
   EXPECT_EQ(arena.onode_cross_entropy_count(), 0);
   EXPECT_EQ(arena.onode_softmax_cross_entropy_count(), 0);
@@ -151,7 +171,7 @@ TEST(CArena, NeuralOpCountersIncrementIndependently) {
 }
 
 TEST(CArena, AutoRequiresGradPolicy) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_FALSE(arena.auto_requires_grad());
   arena.set_auto_requires_grad(true);
   EXPECT_TRUE(arena.auto_requires_grad());
@@ -164,7 +184,7 @@ TEST(CArena, AutoRequiresGradPolicy) {
 // ---------------------------------------------------------------------------
 
 TEST(CArena, AdoptOwnsNodeAndBumpsCount) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.node_count(), 0);
   Dummy& d = arena.adopt<Dummy>(42);
   EXPECT_EQ(d.v, 42);
@@ -174,7 +194,7 @@ TEST(CArena, AdoptOwnsNodeAndBumpsCount) {
 }
 
 TEST(CArena, AdoptReferencesStayStableAcrossReallocation) {
-  CArena<double> arena;
+  CArena arena;
   Dummy& first = arena.adopt<Dummy>(0);
   for (int i = 1; i < 128; ++i) arena.adopt<Dummy>(i);
   EXPECT_EQ(first.v, 0);                       // not dangling after vector growth
@@ -183,8 +203,8 @@ TEST(CArena, AdoptReferencesStayStableAcrossReallocation) {
 }
 
 TEST(CArena, PromotedLeafRoundTrips) {
-  CArena<double> arena;
-  double* key = arena.allocate(1);
+  CArena arena;
+  double* key = arena.allocate<double>(1);
   EXPECT_EQ(arena.promoted_leaf(key), nullptr);
   Dummy& d = arena.adopt<Dummy>(7);
   arena.register_leaf(key, &d);

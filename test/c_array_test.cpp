@@ -41,7 +41,7 @@ using autodiff::content_equal;
 
 // Fill a (4,5,6) array so every element encodes its own coordinates as
 // i*100 + j*10 + k.
-CArray<double> coded_456(CArena<double>& arena){
+CArray<double> coded_456(CArena& arena){
   CArray<double> a(arena, Shape{4, 5, 6});
   for (int64_t i = 0; i < 4; ++i)
     for (int64_t j = 0; j < 5; ++j)
@@ -186,7 +186,7 @@ TEST(Shape, SqueezeZeroRemovesNothing) {
 // ---------------------------------------------------------------------------
 
 TEST(CArray, ConstructorFillsInitialValue) {
-  CArena<double> arena;
+  CArena arena;
   const CArray<double> a(arena, Shape{2, 3}, 4.5);
   EXPECT_EQ(a.size(), 6u);
   EXPECT_EQ(a.rank(), 2u);
@@ -204,7 +204,7 @@ TEST(CArray, DefaultConstructedIsEmpty) {
 }
 
 TEST(CArray, MultiSubscriptReadWrite) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   EXPECT_DOUBLE_EQ((a[1, 2, 3]), 123.0);
   EXPECT_DOUBLE_EQ((a[3, 4, 5]), 345.0);
@@ -213,7 +213,7 @@ TEST(CArray, MultiSubscriptReadWrite) {
 }
 
 TEST(CArray, AtWithIndexObject) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   EXPECT_DOUBLE_EQ(a.at(Index{2, 1, 4}), 214.0);
   a.at(Index{2, 1, 4}) = 1.0;
@@ -221,20 +221,20 @@ TEST(CArray, AtWithIndexObject) {
 }
 
 TEST(CArray, AtResolvesNegativeIndices) {
-  CArena<double> arena;
+  CArena arena;
   const CArray<double> a = coded_456(arena);
   EXPECT_DOUBLE_EQ(a.at(Index{-1, -1, -1}), 345.0);
 }
 
 TEST(CArray, ItemOnSingleElementArray) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{1}, 0.0);
   a.item() = 7.0;
   EXPECT_DOUBLE_EQ(a.item(), 7.0);
 }
 
 TEST(CArray, CloneIsADeepCopy) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> b = a.clone();
   EXPECT_TRUE(content_equal(a, b));
@@ -248,7 +248,7 @@ TEST(CArray, CloneIsADeepCopy) {
 }
 
 TEST(CArray, MoveAliasesBuffer) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{2, 3}, 1.5);
   const double* before = a.data();
   CArray<double> moved = std::move(a);
@@ -262,7 +262,7 @@ TEST(CArray, CopyIsShallowAlias) {
   static_assert(std::is_nothrow_move_constructible_v<CArray<double>>);
   static_assert(std::is_nothrow_move_assignable_v<CArray<double>>);
 
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{2, 3}, 1.5);
   CArray<double> b = a;                       // shallow: same buffer
   EXPECT_EQ(b.data(), a.data());
@@ -277,7 +277,7 @@ TEST(CArray, CopyIsShallowAlias) {
 // ---------------------------------------------------------------------------
 
 TEST(CArrayView, ReshapeSharesStorage) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{4, 5, 6}, 0.0);
   CArray<double> r = a.reshape(Shape{2, 2, -1});
 
@@ -292,7 +292,7 @@ TEST(CArrayView, ReshapeSharesStorage) {
 }
 
 TEST(CArrayView, ReshapeWithRoundingDownIsAPrefixView) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> r = a.reshape(Shape{7, -1});
 
@@ -303,7 +303,7 @@ TEST(CArrayView, ReshapeWithRoundingDownIsAPrefixView) {
 }
 
 TEST(CArrayView, ReshapeToFlatVector) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> flat = a.reshape(Shape{-1});
   EXPECT_EQ(flat.shape(), (Shape{120}));
@@ -312,7 +312,7 @@ TEST(CArrayView, ReshapeToFlatVector) {
 }
 
 TEST(CArrayView, SubPeelsLeadingAxis) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> slice = a.sub(1);
 
@@ -325,14 +325,14 @@ TEST(CArrayView, SubPeelsLeadingAxis) {
 }
 
 TEST(CArrayView, SubAcceptsNegativeSlice) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   EXPECT_DOUBLE_EQ((a.sub(-1)[4, 5]), (a[3, 4, 5]));
   EXPECT_DOUBLE_EQ((a.sub(-4)[0, 0]), (a[0, 0, 0]));
 }
 
 TEST(CArrayView, SubChainsAndOffsetsCompound) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> cell = a.sub(1).sub(2);
   EXPECT_EQ(cell.shape(), (Shape{6}));
@@ -343,7 +343,7 @@ TEST(CArrayView, SubChainsAndOffsetsCompound) {
 }
 
 TEST(CArrayView, ReshapeThenSub) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> row = a.reshape(Shape{6, -1}).sub(0);
   EXPECT_EQ(row.shape(), (Shape{20}));
@@ -352,7 +352,7 @@ TEST(CArrayView, ReshapeThenSub) {
 }
 
 TEST(CArrayView, CloneMaterializesOnlyTheViewSpan) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   CArray<double> piece = a.sub(1).clone();
 
@@ -364,13 +364,13 @@ TEST(CArrayView, CloneMaterializesOnlyTheViewSpan) {
 }
 
 TEST(CArrayView, ItemThroughRankZeroView) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);
   EXPECT_DOUBLE_EQ(a.sub(2).sub(3).sub(4).item(), (a[2, 3, 4]));
 }
 
 TEST(CArrayView, UnsqueezeSharesStorageAndShapeCorrect) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a = coded_456(arena);  // shape {4,5,6}
   CArray<double> u = a.unsqueeze(0);
 
@@ -386,14 +386,14 @@ TEST(CArrayView, UnsqueezeSharesStorageAndShapeCorrect) {
 }
 
 TEST(CArrayView, UnsqueezeAtMiddleAndBack) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{3, 4}, 0.0);
   EXPECT_EQ(a.unsqueeze(1).shape(), (Shape{3, 1, 4}));
   EXPECT_EQ(a.unsqueeze(-1).shape(), (Shape{3, 4, 1}));
 }
 
 TEST(CArrayView, SqueezeSharesStorageAndShapeCorrect) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{1, 4, 1, 5}, 0.0);
 
   CArray<double> s1 = a.squeeze(1);
@@ -410,7 +410,7 @@ TEST(CArrayView, SqueezeSharesStorageAndShapeCorrect) {
 // ---------------------------------------------------------------------------
 
 TEST(CArrayView, ViewFromConstArrayReadsThrough) {
-  CArena<double> arena;
+  CArena arena;
   const CArray<double> a = coded_456(arena);
   CArray<double> c = a.reshape(Shape{4, 5, 6});
   EXPECT_EQ(c.shape(), (Shape{4, 5, 6}));
@@ -419,7 +419,7 @@ TEST(CArrayView, ViewFromConstArrayReadsThrough) {
 }
 
 TEST(CArrayView, ReshapeOnConstArrayYieldsCArray) {
-  CArena<double> arena;
+  CArena arena;
   const CArray<double> a = coded_456(arena);
   auto flat = a.reshape(Shape{120});
   static_assert(std::is_same_v<decltype(flat), CArray<double>>);
@@ -444,7 +444,7 @@ TEST(CArrayView, ConstnessOfArrayControlsElementAccess) {
 // ---------------------------------------------------------------------------
 
 TEST(ContentEqual, ComparesShapeAndValues) {
-  CArena<int> arena;
+  CArena arena;
   CArray<int> m(arena, Shape{2, 3});
   for (int64_t i = 0; i < 2; ++i)
     for (int64_t j = 0; j < 3; ++j)
@@ -462,7 +462,7 @@ TEST(ContentEqual, ComparesShapeAndValues) {
 }
 
 TEST(CArray, EndToEndReshapeAndReduce) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{2, 3});
   double expected = 0.0;
   for (int64_t i = 0; i < 2; ++i)
@@ -490,13 +490,13 @@ TEST(RequiresGrad, ValueTypeAlias) {
 }
 
 TEST(RequiresGrad, DefaultsFalse) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{3}, 1.0);
   EXPECT_FALSE(a.requires_grad());
 }
 
 TEST(RequiresGrad, SetterAndCtorParam) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{3}, 1.0);
   a.set_requires_grad();
   EXPECT_TRUE(a.requires_grad());
@@ -510,7 +510,7 @@ TEST(RequiresGrad, SetterAndCtorParam) {
 }
 
 TEST(RequiresGrad, SurvivesShallowCopyAndClone) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{3}, 1.0, true);
   CArray<double> copy = a;
   EXPECT_TRUE(copy.requires_grad());
@@ -519,7 +519,7 @@ TEST(RequiresGrad, SurvivesShallowCopyAndClone) {
 }
 
 TEST(RequiresGrad, PropagatesThroughViews) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{2, 3}, 0.0, true);
   EXPECT_TRUE(a.reshape(Shape{6}).requires_grad());
   EXPECT_TRUE(a.sub(0).requires_grad());
@@ -531,7 +531,7 @@ TEST(RequiresGrad, PropagatesThroughViews) {
 }
 
 TEST(RequiresGrad, InheritsArenaPolicy) {
-  CArena<double> arena;
+  CArena arena;
   arena.set_auto_requires_grad(true);
   CArray<double> a(arena, Shape{3});
   CArray<double> b(arena, 1.0);
@@ -540,7 +540,7 @@ TEST(RequiresGrad, InheritsArenaPolicy) {
 }
 
 TEST(RequiresGrad, CtorParamOverridesArenaPolicy) {
-  CArena<double> arena;
+  CArena arena;
   arena.set_auto_requires_grad(true);
   CArray<double> a(arena, Shape{3}, 0.0, false);
   EXPECT_FALSE(a.requires_grad());
@@ -551,7 +551,7 @@ TEST(RequiresGrad, CtorParamOverridesArenaPolicy) {
 }
 
 TEST(RequiresGrad, PolicyReadAtConstructionNotLater) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{3});            // policy off at this point
   arena.set_auto_requires_grad(true);           // ... flip it afterwards
   EXPECT_FALSE(a.requires_grad());               // existing array is untouched

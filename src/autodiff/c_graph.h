@@ -29,7 +29,7 @@ enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
 //  Inherits NodeBase (identity + NodeKind tag + polymorphic lifetime) and
 //  CArray<T> (the value buffer), and adds a gradient buffer of the same shape.
 //  Constructors are protected; use VNode, CNode, or ONode. Every node is a
-//  heap object owned by the CArena<T> passed in (via arena.adopt); it is never
+//  heap object owned by the CArena passed in (via arena.adopt); it is never
 //  copied or moved, and the arena — declared first in a scope — must outlive
 //  every CArray<T> handle that still points at it.
 // ---------------------------------------------------------------------------
@@ -48,13 +48,13 @@ struct Node : NodeBase, CArray<T> {
   }
 
 protected:
-  Node(NodeKind k, CArena<T>& arena, const Shape& shape, T val = T{})
+  Node(NodeKind k, CArena& arena, const Shape& shape, T val = T{})
     : NodeBase(k), CArray<T>(arena, shape, val), mGrad(arena, shape, T{}) {}
 
   // Adopts a pre-computed result (used by ONode and the aliasing leaf ctors).
   // The CArray<T> base is move-constructed first, so shape() is valid when
   // mGrad is built.
-  Node(NodeKind k, CArena<T>& arena, CArray<T>&& data)
+  Node(NodeKind k, CArena& arena, CArray<T>&& data)
     : NodeBase(k), CArray<T>(s::move(data)), mGrad(arena, CArray<T>::shape(), T{}) {}
 };
 
@@ -63,13 +63,13 @@ protected:
 // ---------------------------------------------------------------------------
 template <typename T>
 struct VNode : Node<T> {
-  VNode(CArena<T>& arena, const Shape& shape, T val = T{})
+  VNode(CArena& arena, const Shape& shape, T val = T{})
     : Node<T>(NodeKind::Variable, arena, shape, val) {
     this->set_requires_grad(true);
     this->mName = "var_" + s::to_string(arena.note_vnode());
   }
 
-  VNode(CArena<T>& arena, const Shape& shape, s::string_view name, T val = T{})
+  VNode(CArena& arena, const Shape& shape, s::string_view name, T val = T{})
     : Node<T>(NodeKind::Variable, arena, shape, val) {
     this->set_requires_grad(true);
     arena.note_vnode();
@@ -77,7 +77,7 @@ struct VNode : Node<T> {
   }
 
   // Promote an existing array to a variable leaf, aliasing its value buffer.
-  VNode(CArena<T>& arena, const CArray<T>& src)
+  VNode(CArena& arena, const CArray<T>& src)
     : Node<T>(NodeKind::Variable, arena, CArray<T>(src)) {
     assert(src.arena() == &arena);
     this->set_requires_grad(true);
@@ -90,19 +90,19 @@ struct VNode : Node<T> {
 // ---------------------------------------------------------------------------
 template <typename T>
 struct CNode : Node<T> {
-  CNode(CArena<T>& arena, const Shape& shape, T val = T{})
+  CNode(CArena& arena, const Shape& shape, T val = T{})
     : Node<T>(NodeKind::Constant, arena, shape, val) {
     this->mName = "const_" + s::to_string(arena.note_cnode());
   }
 
-  CNode(CArena<T>& arena, const Shape& shape, s::string_view name, T val = T{})
+  CNode(CArena& arena, const Shape& shape, s::string_view name, T val = T{})
     : Node<T>(NodeKind::Constant, arena, shape, val) {
     arena.note_cnode();
     this->mName = name;
   }
 
   // Promote an existing array to a constant leaf, aliasing its value buffer.
-  CNode(CArena<T>& arena, const CArray<T>& src)
+  CNode(CArena& arena, const CArray<T>& src)
     : Node<T>(NodeKind::Constant, arena, CArray<T>(src)) {
     assert(src.arena() == &arena);
     this->set_requires_grad(false);
@@ -128,7 +128,7 @@ struct ONode : Node<T> {
   Node<T>* mRight;
   int64_t  mAxis;
 
-  ONode(CArena<T>& arena, Op op, CArray<T>&& result,
+  ONode(CArena& arena, Op op, CArray<T>&& result,
         Node<T>* left, Node<T>* right = nullptr, int64_t axis = -1)
     : Node<T>(NodeKind::Operation, arena, s::move(result))
     , mOp(op), mLeft(left), mRight(right), mAxis(axis)
@@ -174,7 +174,7 @@ namespace detail {
 // Element-wise binary op. One operand may be a single value (size 1); it is
 // broadcast against the other's shape. Any other shape mismatch asserts.
 template <typename T, typename BinOp>
-ONode<T>& make_binary(CArena<T>& arena, Op op, Node<T>* a, Node<T>* b, BinOp f) {
+ONode<T>& make_binary(CArena& arena, Op op, Node<T>* a, Node<T>* b, BinOp f) {
   assert(a->arena() == b->arena());
   const bool as = a->size() == 1, bs = b->size() == 1;
   assert(as or bs or a->shape() == b->shape());
@@ -188,7 +188,7 @@ ONode<T>& make_binary(CArena<T>& arena, Op op, Node<T>* a, Node<T>* b, BinOp f) 
 }
 
 template <typename T, typename UnOp>
-ONode<T>& make_unary(CArena<T>& arena, Op op, Node<T>* a, UnOp f) {
+ONode<T>& make_unary(CArena& arena, Op op, Node<T>* a, UnOp f) {
   CArray<T> result(arena, a->shape());
   const T* pa = a->data();
   T* pr = result.data();
@@ -204,7 +204,7 @@ ONode<T>& make_unary(CArena<T>& arena, Op op, Node<T>* a, UnOp f) {
 // The product is always computed as the (m,k)*(k,n) triple loop in row-major
 // flat indices, valid for every case because out.product() == m*n.
 template <typename T>
-ONode<T>& make_dot(CArena<T>& arena, Node<T>* a, Node<T>* b) {
+ONode<T>& make_dot(CArena& arena, Node<T>* a, Node<T>* b) {
   assert(a->arena() == b->arena());
   const s::size_t ra = a->rank(), rb = b->rank();
   assert((ra == 1 or ra == 2) and (rb == 1 or rb == 2));
@@ -274,7 +274,7 @@ inline Shape reduced_shape(const Shape& in, int64_t ax) {
 // Mean grad likewise, scaled by 1/count), and routes the Max/Min grad to each
 // group's arg-extreme element (recomputed from mLeft).
 template <typename T, typename Fold>
-ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
+ONode<T>& make_reduce(CArena& arena, Op op, Node<T>* a,
                       s::optional<int64_t> axis, Fold f, bool average = false) {
   assert(a->size() >= 1);
   const auto [outer, axlen, inner, ax] = axis_extents(a->shape(), axis);
@@ -297,7 +297,7 @@ ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
 // resolved axis is stored on the ONode (the reverse-pass softmax Jacobian needs
 // it).
 template <typename T>
-ONode<T>& make_softmax(CArena<T>& arena, Node<T>* a, s::optional<int64_t> axis) {
+ONode<T>& make_softmax(CArena& arena, Node<T>* a, s::optional<int64_t> axis) {
   assert(a->size() >= 1);
   const auto [outer, axlen, inner, ax] = axis_extents(a->shape(), axis);
   const T* pin = a->data();
@@ -329,7 +329,7 @@ ONode<T>& make_softmax(CArena<T>& arena, Node<T>* a, s::optional<int64_t> axis) 
 // logsumexp(logits) - logits[label] form is used (no clamp needed). mLeft =
 // pred, mRight = target, mAxis = ax.
 template <typename T>
-ONode<T>& make_cross_entropy(CArena<T>& arena, Op op, Node<T>* pred,
+ONode<T>& make_cross_entropy(CArena& arena, Op op, Node<T>* pred,
                              Node<T>* target, s::optional<int64_t> axis,
                              bool from_logits) {
   assert(pred->arena() == target->arena());
@@ -503,12 +503,27 @@ concept is_graph_operand =
   s::is_base_of_v<CArray<typename s::remove_cvref_t<X>::value_type>,
                   s::remove_cvref_t<X>>;
 
+// Result element type of a binary operator. With a scalar on one side the tensor
+// operand's type wins (the scalar is cast to it — unchanged behaviour). With a
+// tensor on both sides the C++ usual-arithmetic-conversion type wins, so
+// float & bool -> float, int + double -> double. common_type_t<T,T> == T, so a
+// same-type expression is byte-identical to before.
+template <typename A, typename B, bool BothOperands>
+struct graph_value_impl {
+  using type = typename s::remove_cvref_t<
+    s::conditional_t<is_graph_operand<A>, A, B>>::value_type;
+};
 template <typename A, typename B>
-using graph_value_t = typename s::remove_cvref_t<
-  s::conditional_t<is_graph_operand<A>, A, B>>::value_type;
+struct graph_value_impl<A, B, true> {
+  using type = s::common_type_t<typename s::remove_cvref_t<A>::value_type,
+                                typename s::remove_cvref_t<B>::value_type>;
+};
+template <typename A, typename B>
+using graph_value_t = typename graph_value_impl<
+  A, B, is_graph_operand<A> and is_graph_operand<B>>::type;
 
-template <typename T, typename A, typename B>
-CArena<T>& pick_arena(const A& a, const B& b) {
+template <typename A, typename B>
+CArena& pick_arena(const A& a, const B& b) {
   if constexpr (is_graph_operand<A>) {
     if constexpr (is_graph_operand<B>) assert(a.arena() == b.arena());
     assert(a.arena());
@@ -520,14 +535,14 @@ CArena<T>& pick_arena(const A& a, const B& b) {
 }
 
 template <typename T>
-Node<T>& promote_scalar(CArena<T>& arena, T v) {
+Node<T>& promote_scalar(CArena& arena, T v) {
   // A numeric literal is always a constant, even when the arena's
   // auto_requires_grad policy is on — pass the flag explicitly.
   return arena.template adopt<CNode<T>>(arena, CArray<T>(arena, v, false));
 }
 
 template <typename T>
-Node<T>& promote_leaf(CArena<T>& arena, const CArray<T>& src) {
+Node<T>& promote_leaf(CArena& arena, const CArray<T>& src) {
   assert(src.arena() == &arena);
   const T* key = src.data();
   if (NodeBase* hit = arena.promoted_leaf(key)) {
@@ -543,15 +558,34 @@ Node<T>& promote_leaf(CArena<T>& arena, const CArray<T>& src) {
   return n;
 }
 
+// Element type differs from the operator's result type: snapshot `src` into a
+// fresh CArray<TR> (element-wise static_cast) and promote that as a constant
+// leaf. An implicit cast is not a differentiable edge in this model — a
+// gradient does not flow back to `src` (a real Op::Cast node is a follow-up).
+template <typename TR, typename TS>
+Node<TR>& convert_leaf(CArena& arena, const CArray<TS>& src) {
+  assert(src.arena() == &arena);
+  CArray<TR> conv(arena, src.shape());
+  const TS* ps = src.data();
+  TR* pc = conv.data();
+  for (s::size_t i = 0, n = src.size(); i < n; ++i)
+    pc[i] = static_cast<TR>(ps[i]);
+  return static_cast<Node<TR>&>(arena.adopt<CNode<TR>>(arena, conv));
+}
+
 template <typename T, typename X>
-Node<T>& to_node(CArena<T>& arena, X&& x) {
+Node<T>& to_node(CArena& arena, X&& x) {
   using U = s::remove_cvref_t<X>;
   if constexpr (s::is_base_of_v<Node<T>, U>) {
     static_assert(s::is_lvalue_reference_v<X>,
                   "a temporary graph node operand would dangle — name it or pass a CArray");
     return x;
   } else if constexpr (is_graph_operand<X>) {
-    return promote_leaf<T>(arena, x);
+    using TS = typename U::value_type;
+    if constexpr (s::is_same_v<TS, T>)
+      return promote_leaf<T>(arena, x);
+    else
+      return convert_leaf<T>(arena, static_cast<const CArray<TS>&>(x));
   } else {
     return promote_scalar<T>(arena, static_cast<T>(x));
   }
@@ -568,16 +602,12 @@ Node<T>& to_node(CArena<T>& arena, X&& x) {
 //  `&` and `^` lower precedence than `+ - * /`, so mixed expressions still need
 //  parentheses: write `(a & b) + c` and `(x ^ n) * c`.
 // ---------------------------------------------------------------------------
-#define AUTODIFF_GRAPH_BINOP(SYM, FN)                                              \
+#define AUTODIFF_GRAPH_BINOP(SYM, FN)                                             \
   template <typename A, typename B>                                               \
     requires (detail::is_graph_operand<A> or detail::is_graph_operand<B>)         \
   auto& operator SYM(A&& a, B&& b) {                                              \
     using T = detail::graph_value_t<A, B>;                                        \
-    if constexpr (detail::is_graph_operand<A> and detail::is_graph_operand<B>)    \
-      static_assert(s::is_same_v<typename s::remove_cvref_t<A>::value_type,       \
-                                 typename s::remove_cvref_t<B>::value_type>,      \
-                    "graph operands must share value_type");                      \
-    CArena<T>& ar = detail::pick_arena<T>(a, b);                                  \
+    CArena& ar = detail::pick_arena(a, b);                                        \
     return FN(&detail::to_node<T>(ar, s::forward<A>(a)),                          \
               &detail::to_node<T>(ar, s::forward<B>(b)));                         \
   }
@@ -625,7 +655,7 @@ template <typename A, typename B>
   requires (detail::is_graph_operand<A> or detail::is_graph_operand<B>)
 auto& pow(A&& a, B&& b) {
   using T = detail::graph_value_t<A, B>;
-  CArena<T>& ar = detail::pick_arena<T>(a, b);
+  CArena& ar = detail::pick_arena(a, b);
   return graph_pow(&detail::to_node<T>(ar, s::forward<A>(a)),
                    &detail::to_node<T>(ar, s::forward<B>(b)));
 }
@@ -672,7 +702,7 @@ auto& softmax(A&& a, s::optional<int64_t> axis = s::nullopt) {
     requires (detail::is_graph_operand<A> or detail::is_graph_operand<B>)         \
   auto& NAME(A&& a, B&& b, s::optional<int64_t> axis = s::nullopt) {              \
     using T = detail::graph_value_t<A, B>;                                        \
-    CArena<T>& ar = detail::pick_arena<T>(a, b);                                  \
+    CArena& ar = detail::pick_arena(a, b);                                        \
     return FN(&detail::to_node<T>(ar, s::forward<A>(a)),                          \
              &detail::to_node<T>(ar, s::forward<B>(b)), axis);                    \
   }
@@ -709,12 +739,12 @@ CNode<T>& graph_constant(CArray<T>& x) {
 
 // Standalone leaf with its own fresh buffer (not tied to a CArray handle).
 template <typename T>
-VNode<T>& graph_variable(CArena<T>& arena, const Shape& shape, T val = T{}) {
+VNode<T>& graph_variable(CArena& arena, const Shape& shape, T val = T{}) {
   return arena.template adopt<VNode<T>>(arena, shape, val);
 }
 
 template <typename T>
-CNode<T>& graph_constant(CArena<T>& arena, const Shape& shape, T val = T{}) {
+CNode<T>& graph_constant(CArena& arena, const Shape& shape, T val = T{}) {
   return arena.template adopt<CNode<T>>(arena, shape, val);
 }
 
@@ -728,9 +758,8 @@ const CArray<T>& grad_of(const CArray<T>& x) {
   return static_cast<const Node<T>&>(*nb).grad();
 }
 
-// Zero every gradient buffer in the arena's tape.
-template <typename T>
-void zero_grad(CArena<T>& arena) {
+// Zero every gradient buffer in the arena's tape (all element types).
+inline void zero_grad(CArena& arena) {
   for (int64_t i = 0, n = arena.node_count(); i < n; ++i)
     arena.node_at(i).zero_grad();
 }

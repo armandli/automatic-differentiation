@@ -176,7 +176,7 @@ inline Shape resolve_reshape(const Shape& request, int64_t total){
 }
 
 // ---------------------------------------------------------------------------
-//  CArray<T>: a Shape plus a non-owning pointer into a CArena<T> block. The
+//  CArray<T>: a Shape plus a non-owning pointer into a CArena block. The
 //  arena owns the storage; CArray is a stack value handle. Copy and move are
 //  shallow — both alias the same buffer (deliberate: clone() is the only deep
 //  copy). reshape()/sub()/unsqueeze()/squeeze() are const and return a fresh
@@ -198,11 +198,11 @@ struct CArray {
 
   CArray() noexcept: mShape(), mData(nullptr), mArena(nullptr) {}
 
-  explicit CArray(CArena<T>& arena, T val, s::optional<bool> requires_grad = s::nullopt)
+  explicit CArray(CArena& arena, T val, s::optional<bool> requires_grad = s::nullopt)
     : mShape({1}), mData(arena.allocate(1U, val)), mArena(&arena)
     , mRequiresGrad(requires_grad.value_or(arena.auto_requires_grad())) {}
 
-  explicit CArray(CArena<T>& arena, const Shape& shape, T init_val = T{},
+  explicit CArray(CArena& arena, const Shape& shape, T init_val = T{},
                   s::optional<bool> requires_grad = s::nullopt)
     : mShape(shape)
     , mData(arena.allocate(static_cast<s::size_t>(shape.product()), init_val))
@@ -223,7 +223,7 @@ struct CArray {
   const T* data() const noexcept { return mData; }
   T* data() noexcept { return mData; }
 
-  CArena<T>* arena() const noexcept { return mArena; }
+  CArena* arena() const noexcept { return mArena; }
 
   bool requires_grad() const noexcept { return mRequiresGrad; }
   void set_requires_grad(bool b = true) noexcept { mRequiresGrad = b; }
@@ -285,13 +285,13 @@ struct CArray {
 
 private:
   // Aliasing-view constructor: shares base's storage, allocates nothing.
-  CArray(const Shape& shape, T* base, CArena<T>* arena, bool requires_grad) noexcept
+  CArray(const Shape& shape, T* base, CArena* arena, bool requires_grad) noexcept
     : mShape(shape), mData(base), mArena(arena), mRequiresGrad(requires_grad) {}
 
-  Shape      mShape;
-  T*         mData;          // non-owning; into a CArena<T> block
-  CArena<T>* mArena;         // non-owning; for clone() / further allocation
-  bool       mRequiresGrad = false;
+  Shape   mShape;
+  T*      mData;             // non-owning; into a CArena block
+  CArena* mArena;            // non-owning; for clone() / further allocation
+  bool    mRequiresGrad = false;
 };
 
 // Exact element-wise equality: same shape, same values in row-major order.

@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 
@@ -47,21 +48,21 @@ using autodiff::zero_grad;
 // ---------------------------------------------------------------------------
 
 TEST(Counters, VNodeIncrementsVNodeCounter) {
-  CArena<double> arena;
+  CArena arena;
   const int64_t before = arena.vnode_count();
   VNode<double> v(arena, Shape{2, 3}, 1.0);
   EXPECT_EQ(arena.vnode_count(), before + 1);
 }
 
 TEST(Counters, CNodeIncrementsCNodeCounter) {
-  CArena<double> arena;
+  CArena arena;
   const int64_t before = arena.cnode_count();
   CNode<double> c(arena, Shape{2, 3}, 1.0);
   EXPECT_EQ(arena.cnode_count(), before + 1);
 }
 
 TEST(Counters, AddIncrementsAddCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   const int64_t before = arena.onode_add_count();
   graph_add(&a, &b);
@@ -69,7 +70,7 @@ TEST(Counters, AddIncrementsAddCounter) {
 }
 
 TEST(Counters, SubIncrementsSubCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   const int64_t before = arena.onode_sub_count();
   graph_sub(&a, &b);
@@ -77,7 +78,7 @@ TEST(Counters, SubIncrementsSubCounter) {
 }
 
 TEST(Counters, HadamardIncrementsHadamardCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   const int64_t before = arena.onode_hadamard_count();
   graph_hadamard(&a, &b);
@@ -85,7 +86,7 @@ TEST(Counters, HadamardIncrementsHadamardCounter) {
 }
 
 TEST(Counters, DotIncrementsDotCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 2}, 2.0);
   const int64_t before = arena.onode_dot_count();
   graph_dot(&a, &b);
@@ -93,7 +94,7 @@ TEST(Counters, DotIncrementsDotCounter) {
 }
 
 TEST(Counters, DivIncrementsDivCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   const int64_t before = arena.onode_div_count();
   graph_div(&a, &b);
@@ -101,7 +102,7 @@ TEST(Counters, DivIncrementsDivCounter) {
 }
 
 TEST(Counters, ExpIncrementsExpCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0);
   const int64_t before = arena.onode_exp_count();
   graph_exp(&a);
@@ -109,7 +110,7 @@ TEST(Counters, ExpIncrementsExpCounter) {
 }
 
 TEST(Counters, LogIncrementsLogCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0);
   const int64_t before = arena.onode_log_count();
   graph_log(&a);
@@ -117,7 +118,7 @@ TEST(Counters, LogIncrementsLogCounter) {
 }
 
 TEST(Counters, SinIncrementsSinCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 0.5);
   const int64_t before = arena.onode_sin_count();
   graph_sin(&a);
@@ -125,7 +126,7 @@ TEST(Counters, SinIncrementsSinCounter) {
 }
 
 TEST(Counters, CosIncrementsCosCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 0.5);
   const int64_t before = arena.onode_cos_count();
   graph_cos(&a);
@@ -133,7 +134,7 @@ TEST(Counters, CosIncrementsCosCounter) {
 }
 
 TEST(Counters, TanIncrementsTanCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 0.5);
   const int64_t before = arena.onode_tan_count();
   graph_tan(&a);
@@ -141,7 +142,7 @@ TEST(Counters, TanIncrementsTanCounter) {
 }
 
 TEST(Counters, SqrtIncrementsSqrtCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 4.0);
   const int64_t before = arena.onode_sqrt_count();
   graph_sqrt(&a);
@@ -149,7 +150,7 @@ TEST(Counters, SqrtIncrementsSqrtCounter) {
 }
 
 TEST(Counters, AbsIncrementsAbsCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, -3.0);
   const int64_t before = arena.onode_abs_count();
   graph_abs(&a);
@@ -157,7 +158,7 @@ TEST(Counters, AbsIncrementsAbsCounter) {
 }
 
 TEST(Counters, PowIncrementsPowCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 2.0), b(arena, Shape{2}, 3.0);
   const int64_t before = arena.onode_pow_count();
   graph_pow(&a, &b);
@@ -165,14 +166,14 @@ TEST(Counters, PowIncrementsPowCounter) {
 }
 
 TEST(Counters, VNodeBumpsCarrayCountByTwo) {
-  CArena<double> arena;
+  CArena arena;
   EXPECT_EQ(arena.carray_count(), 0);
   VNode<double> v(arena, Shape{3}, 1.0);
   EXPECT_EQ(arena.carray_count(), 2);   // value buffer + grad buffer
 }
 
 TEST(Counters, BinaryOpBumpsCarrayCountByTwo) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 1.0), b(arena, Shape{3}, 2.0);
   EXPECT_EQ(arena.carray_count(), 4);
   graph_add(&a, &b);
@@ -180,7 +181,7 @@ TEST(Counters, BinaryOpBumpsCarrayCountByTwo) {
 }
 
 TEST(Counters, AliasingViewDoesNotAllocate) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{6}, 1.0);
   const int64_t before = arena.carray_count();
   CArray<double> r = a.reshape(Shape{2, 3});
@@ -197,49 +198,49 @@ TEST(Counters, AliasingViewDoesNotAllocate) {
 // ---------------------------------------------------------------------------
 
 TEST(ONodeShape, BinaryOpPreservesShape) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3, 4}, 1.0), b(arena, Shape{3, 4}, 2.0);
   auto& n = graph_add(&a, &b);
   EXPECT_EQ(n.shape(), (Shape{3, 4}));
 }
 
 TEST(ONodeShape, UnaryOpPreservesShape) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3, 4}, 1.0);
   auto& n = graph_exp(&a);
   EXPECT_EQ(n.shape(), (Shape{2, 3, 4}));
 }
 
 TEST(ONodeShape, PowPreservesShape) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3, 4}, 2.0), b(arena, Shape{2, 3, 4}, 3.0);
   auto& n = graph_pow(&a, &b);
   EXPECT_EQ(n.shape(), (Shape{2, 3, 4}));
 }
 
 TEST(ONodeShape, DotMatMatContractsInnerDim) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 4}, 1.0);
   auto& n = graph_dot(&a, &b);
   EXPECT_EQ(n.shape(), (Shape{2, 4}));
 }
 
 TEST(ONodeShape, DotMatVecDropsTrailingAxis) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3}, 1.0);
   auto& n = graph_dot(&a, &b);
   EXPECT_EQ(n.shape(), (Shape{2}));
 }
 
 TEST(ONodeShape, DotVecMatDropsLeadingAxis) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 1.0), b(arena, Shape{3, 4}, 1.0);
   auto& n = graph_dot(&a, &b);
   EXPECT_EQ(n.shape(), (Shape{4}));
 }
 
 TEST(ONodeShape, DotVecVecYieldsSingleValue) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 1.0), b(arena, Shape{3}, 1.0);
   auto& n = graph_dot(&a, &b);
   EXPECT_EQ(n.shape(), (Shape{1}));
@@ -250,7 +251,7 @@ TEST(ONodeShape, DotVecVecYieldsSingleValue) {
 // ---------------------------------------------------------------------------
 
 TEST(ONodeLinks, BinaryOpLinksInputNodes) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   auto& n = graph_add(&a, &b);
   EXPECT_EQ(n.left(),  static_cast<Node<double>*>(&a));
@@ -258,7 +259,7 @@ TEST(ONodeLinks, BinaryOpLinksInputNodes) {
 }
 
 TEST(ONodeLinks, UnaryOpHasNullRight) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0);
   auto& n = graph_exp(&a);
   EXPECT_EQ(n.left(),  static_cast<Node<double>*>(&a));
@@ -266,7 +267,7 @@ TEST(ONodeLinks, UnaryOpHasNullRight) {
 }
 
 TEST(ONodeLinks, OpEnumMatchesOperation) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0), b(arena, Shape{2}, 2.0);
   auto& add_n = graph_add(&a, &b);
   auto& sub_n = graph_sub(&a, &b);
@@ -283,7 +284,7 @@ TEST(ONodeLinks, OpEnumMatchesOperation) {
 }
 
 TEST(ONodeLinks, DotLinksBothInputs) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 2}, 2.0);
   auto& n = graph_dot(&a, &b);
   EXPECT_EQ(n.op(), Op::Dot);
@@ -292,7 +293,7 @@ TEST(ONodeLinks, DotLinksBothInputs) {
 }
 
 TEST(ONodeLinks, NewOpsEnumMatchesOperation) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 0.5), b(arena, Shape{2}, 4.0);
   auto& sin_n = graph_sin(&a);
   auto& cos_n = graph_cos(&a);
@@ -309,7 +310,7 @@ TEST(ONodeLinks, NewOpsEnumMatchesOperation) {
 }
 
 TEST(ONodeLinks, NewUnaryOpsHaveNullRight) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 0.5);
   auto& n = graph_sin(&a);
   EXPECT_EQ(n.left(),  static_cast<Node<double>*>(&a));
@@ -317,7 +318,7 @@ TEST(ONodeLinks, NewUnaryOpsHaveNullRight) {
 }
 
 TEST(ONodeLinks, PowLinksBothInputs) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 2.0), b(arena, Shape{2}, 3.0);
   auto& n = graph_pow(&a, &b);
   EXPECT_EQ(n.left(),  static_cast<Node<double>*>(&a));
@@ -329,7 +330,7 @@ TEST(ONodeLinks, PowLinksBothInputs) {
 // ---------------------------------------------------------------------------
 
 TEST(ONodeValues, AddIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 3.0), b(arena, Shape{3}, 2.0);
   auto& n = graph_add(&a, &b);
   for (int64_t i = 0; i < 3; ++i)
@@ -337,7 +338,7 @@ TEST(ONodeValues, AddIsElementWise) {
 }
 
 TEST(ONodeValues, SubIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 5.0), b(arena, Shape{3}, 2.0);
   auto& n = graph_sub(&a, &b);
   for (int64_t i = 0; i < 3; ++i)
@@ -345,7 +346,7 @@ TEST(ONodeValues, SubIsElementWise) {
 }
 
 TEST(ONodeValues, HadamardIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 3.0), b(arena, Shape{3}, 4.0);
   auto& n = graph_hadamard(&a, &b);
   for (int64_t i = 0; i < 3; ++i)
@@ -353,7 +354,7 @@ TEST(ONodeValues, HadamardIsElementWise) {
 }
 
 TEST(ONodeValues, DivIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 6.0), b(arena, Shape{3}, 2.0);
   auto& n = graph_div(&a, &b);
   for (int64_t i = 0; i < 3; ++i)
@@ -361,7 +362,7 @@ TEST(ONodeValues, DivIsElementWise) {
 }
 
 TEST(ONodeValues, ExpIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 2.0);
   auto& n = graph_exp(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -369,7 +370,7 @@ TEST(ONodeValues, ExpIsElementWise) {
 }
 
 TEST(ONodeValues, LogIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, std::exp(1.0));
   auto& n = graph_log(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -377,7 +378,7 @@ TEST(ONodeValues, LogIsElementWise) {
 }
 
 TEST(ONodeValues, SinIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 0.5);
   auto& n = graph_sin(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -385,7 +386,7 @@ TEST(ONodeValues, SinIsElementWise) {
 }
 
 TEST(ONodeValues, CosIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 0.5);
   auto& n = graph_cos(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -393,7 +394,7 @@ TEST(ONodeValues, CosIsElementWise) {
 }
 
 TEST(ONodeValues, TanIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 0.5);
   auto& n = graph_tan(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -401,7 +402,7 @@ TEST(ONodeValues, TanIsElementWise) {
 }
 
 TEST(ONodeValues, SqrtIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 4.0);
   auto& n = graph_sqrt(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -409,7 +410,7 @@ TEST(ONodeValues, SqrtIsElementWise) {
 }
 
 TEST(ONodeValues, AbsIsElementWiseOnNegativeInput) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, -3.0);
   auto& n = graph_abs(&a);
   for (int64_t i = 0; i < 3; ++i)
@@ -417,7 +418,7 @@ TEST(ONodeValues, AbsIsElementWiseOnNegativeInput) {
 }
 
 TEST(ONodeValues, PowIsElementWise) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 2.0), b(arena, Shape{3}, 3.0);
   auto& n = graph_pow(&a, &b);
   for (int64_t i = 0; i < 3; ++i)
@@ -425,7 +426,7 @@ TEST(ONodeValues, PowIsElementWise) {
 }
 
 TEST(ONodeValues, DotComputesMatrixProduct) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 0.0), b(arena, Shape{3, 2}, 0.0);
   const double av[2][3] = {{1, 2, 3}, {4, 5, 6}};
   const double bv[3][2] = {{7, 8}, {9, 10}, {11, 12}};
@@ -443,7 +444,7 @@ TEST(ONodeValues, DotComputesMatrixProduct) {
 }
 
 TEST(ONodeValues, DotVecVecIsInnerProduct) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{3}, 0.0), b(arena, Shape{3}, 0.0);
   for (int64_t i = 0; i < 3; ++i) { a[i] = i + 1.0; b[i] = i + 4.0; }
   auto& n = graph_dot(&a, &b);
@@ -452,7 +453,7 @@ TEST(ONodeValues, DotVecVecIsInnerProduct) {
 }
 
 TEST(ONodeValues, DotMatVecIsMatrixVectorProduct) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 0.0), b(arena, Shape{3}, 0.0);
   const double av[2][3] = {{1, 2, 3}, {4, 5, 6}};
   for (int64_t i = 0; i < 2; ++i)
@@ -470,13 +471,13 @@ TEST(ONodeValues, DotMatVecIsMatrixVectorProduct) {
 // ---------------------------------------------------------------------------
 
 TEST(GradBuffer, GradHasSameShapeAsValue) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{3, 4}, 1.0);
   EXPECT_EQ(v.grad().shape(), (Shape{3, 4}));
 }
 
 TEST(GradBuffer, GradIsZeroInitialized) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{4}, 5.0);
   const double* pg = v.grad().data();
   for (int64_t i = 0; i < 4; ++i)
@@ -484,7 +485,7 @@ TEST(GradBuffer, GradIsZeroInitialized) {
 }
 
 TEST(GradBuffer, ZeroGradResetsToZero) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{3}, 1.0);
   v.grad().data()[0] = 9.9;
   v.grad().data()[1] = 8.8;
@@ -495,7 +496,7 @@ TEST(GradBuffer, ZeroGradResetsToZero) {
 }
 
 TEST(GradBuffer, ONodeGradHasSameShapeAsValue) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{2, 3}, 1.0);
   auto& n = graph_add(&a, &b);
   EXPECT_EQ(n.grad().shape(), n.shape());
@@ -506,7 +507,7 @@ TEST(GradBuffer, ONodeGradHasSameShapeAsValue) {
 // ---------------------------------------------------------------------------
 
 TEST(OperatorOverload, PlusBuildsAddNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 3.0), b(arena, Shape{2}, 4.0);
   auto& n = a + b;
   EXPECT_EQ(n.op(), Op::Add);
@@ -514,7 +515,7 @@ TEST(OperatorOverload, PlusBuildsAddNode) {
 }
 
 TEST(OperatorOverload, MinusBuildsSubNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 5.0), b(arena, Shape{2}, 2.0);
   auto& n = a - b;
   EXPECT_EQ(n.op(), Op::Sub);
@@ -522,7 +523,7 @@ TEST(OperatorOverload, MinusBuildsSubNode) {
 }
 
 TEST(OperatorOverload, StarBuildsHadamardNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 3.0), b(arena, Shape{2}, 4.0);
   auto& n = a * b;
   EXPECT_EQ(n.op(), Op::Hadamard);
@@ -530,7 +531,7 @@ TEST(OperatorOverload, StarBuildsHadamardNode) {
 }
 
 TEST(OperatorOverload, SlashBuildsDivNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 6.0), b(arena, Shape{2}, 3.0);
   auto& n = a / b;
   EXPECT_EQ(n.op(), Op::Div);
@@ -538,7 +539,7 @@ TEST(OperatorOverload, SlashBuildsDivNode) {
 }
 
 TEST(OperatorOverload, CaretBuildsPowNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 2.0), b(arena, Shape{2}, 3.0);
   auto& n = a ^ b;
   EXPECT_EQ(n.op(), Op::Pow);
@@ -546,7 +547,7 @@ TEST(OperatorOverload, CaretBuildsPowNode) {
 }
 
 TEST(OperatorOverload, AmpersandBuildsDotNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0), b(arena, Shape{3, 2}, 1.0);
   auto& n = a & b;
   EXPECT_EQ(n.op(), Op::Dot);
@@ -555,7 +556,7 @@ TEST(OperatorOverload, AmpersandBuildsDotNode) {
 }
 
 TEST(OperatorOverload, ChainedOpsLinkCorrectly) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 2.0), b(arena, Shape{2}, 3.0);
   auto& ab = a + b;        // 5
   auto& abxa = ab * a;     // 10
@@ -569,7 +570,7 @@ TEST(OperatorOverload, ChainedOpsLinkCorrectly) {
 // ---------------------------------------------------------------------------
 
 TEST(NodeName, VNodeAutoNameUsesCounter) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0);
   VNode<double> b(arena, Shape{2}, 1.0);
   EXPECT_EQ(a.name(), "var_0");
@@ -577,20 +578,20 @@ TEST(NodeName, VNodeAutoNameUsesCounter) {
 }
 
 TEST(NodeName, VNodeCustomNameIsUsed) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{2}, "weights", 1.0);
   EXPECT_EQ(v.name(), "weights");
 }
 
 TEST(NodeName, VNodeNamesAreDistinct) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 1.0);
   VNode<double> b(arena, Shape{2}, 1.0);
   EXPECT_NE(a.name(), b.name());
 }
 
 TEST(NodeName, CNodeAutoNameUsesCounter) {
-  CArena<double> arena;
+  CArena arena;
   CNode<double> a(arena, Shape{2}, 1.0);
   CNode<double> b(arena, Shape{2}, 1.0);
   EXPECT_EQ(a.name(), "const_0");
@@ -598,13 +599,13 @@ TEST(NodeName, CNodeAutoNameUsesCounter) {
 }
 
 TEST(NodeName, CNodeCustomNameIsUsed) {
-  CArena<double> arena;
+  CArena arena;
   CNode<double> c(arena, Shape{2}, "bias", 0.0);
   EXPECT_EQ(c.name(), "bias");
 }
 
 TEST(NodeName, VNodeAndCNodeCountersAreIndependent) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{2}, 1.0);
   CNode<double> c(arena, Shape{2}, 1.0);
   EXPECT_EQ(v.name(), "var_0");
@@ -616,7 +617,7 @@ TEST(NodeName, VNodeAndCNodeCountersAreIndependent) {
 // ---------------------------------------------------------------------------
 
 TEST(Promotion, CArrayDefaultsToConstant) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 3.0);
   auto& n = x + x;
   EXPECT_EQ(arena.cnode_count(), 1);            // one memoized leaf
@@ -626,7 +627,7 @@ TEST(Promotion, CArrayDefaultsToConstant) {
 }
 
 TEST(Promotion, RequiresGradCArrayBecomesVariable) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 3.0);
   x.set_requires_grad();
   auto& n = x * x;
@@ -638,7 +639,7 @@ TEST(Promotion, RequiresGradCArrayBecomesVariable) {
 }
 
 TEST(Promotion, SameArrayAcrossStatementsMapsToOneNode) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2}, 1.0);
   x.set_requires_grad();
   auto& p = x + 1.0;
@@ -648,7 +649,7 @@ TEST(Promotion, SameArrayAcrossStatementsMapsToOneNode) {
 }
 
 TEST(Promotion, ArenaPolicyPromotesCArrayToVariable) {
-  CArena<double> arena;
+  CArena arena;
   arena.set_auto_requires_grad(true);
   CArray<double> x(arena, Shape{3}, 2.0);       // no explicit flag
   auto& n = x * x;
@@ -658,7 +659,7 @@ TEST(Promotion, ArenaPolicyPromotesCArrayToVariable) {
 }
 
 TEST(Promotion, LiteralStaysConstantUnderArenaPolicy) {
-  CArena<double> arena;
+  CArena arena;
   arena.set_auto_requires_grad(true);
   CArray<double> x(arena, Shape{3}, 1.0);
   auto& n = x + 2.0;
@@ -667,7 +668,7 @@ TEST(Promotion, LiteralStaysConstantUnderArenaPolicy) {
 }
 
 TEST(Promotion, ScalarLiteralBecomesConstantScalar) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 1.0);
   ONode<double>& n = x + 2.0;
   EXPECT_EQ(n.op(), Op::Add);
@@ -677,7 +678,7 @@ TEST(Promotion, ScalarLiteralBecomesConstantScalar) {
 }
 
 TEST(Promotion, ScalarBroadcastsAgainstArrayShape) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 3.0);
   auto& n = x * 2.0;
   EXPECT_EQ(n.shape(), (Shape{2, 3}));
@@ -686,7 +687,7 @@ TEST(Promotion, ScalarBroadcastsAgainstArrayShape) {
 }
 
 TEST(Promotion, ScalarLiteralOnLeft) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 4.0);
   auto& n = 10.0 - x;
   EXPECT_EQ(n.op(), Op::Sub);
@@ -695,7 +696,7 @@ TEST(Promotion, ScalarLiteralOnLeft) {
 }
 
 TEST(Promotion, IntLiteralIsCastToValueType) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2}, 5.0);
   auto& n = x + 2;                              // int literal
   for (int64_t i = 0; i < 2; ++i)
@@ -703,7 +704,7 @@ TEST(Promotion, IntLiteralIsCastToValueType) {
 }
 
 TEST(Promotion, ChainWithoutNamingIntermediates) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> a(arena, Shape{3}, 2.0);
   CArray<double> x(arena, Shape{3}, 3.0);
   CArray<double> b(arena, Shape{3}, 1.0);
@@ -715,7 +716,7 @@ TEST(Promotion, ChainWithoutNamingIntermediates) {
 }
 
 TEST(Promotion, MixedNodeAndCArrayOperands) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> v(arena, Shape{3}, 2.0);
   CArray<double> c(arena, Shape{3}, 3.0);
   auto& n = v * c;
@@ -726,7 +727,7 @@ TEST(Promotion, MixedNodeAndCArrayOperands) {
 }
 
 TEST(Promotion, DotAndPowThroughOperators) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> w(arena, Shape{3}, 0.5);
   w.set_requires_grad();
   CArray<double> x(arena, Shape{3}, 2.0);
@@ -737,7 +738,7 @@ TEST(Promotion, DotAndPowThroughOperators) {
 }
 
 TEST(Promotion, AliasingPromotionAllocatesOnlyGradBuffer) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 1.0);
   const int64_t before = arena.carray_count();  // x's value buffer only
   graph_constant(x);
@@ -749,7 +750,7 @@ TEST(Promotion, AliasingPromotionAllocatesOnlyGradBuffer) {
 // ---------------------------------------------------------------------------
 
 TEST(UnaryPromotion, NegateBuildsNegNode) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 2.0);
   auto& n = -x;
   EXPECT_EQ(n.op(), Op::Neg);
@@ -759,7 +760,7 @@ TEST(UnaryPromotion, NegateBuildsNegNode) {
 }
 
 TEST(UnaryPromotion, GraphNegDirect) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2}, 3.0);
   const int64_t before = arena.onode_neg_count();
   auto& n = graph_neg(&a);
@@ -768,7 +769,7 @@ TEST(UnaryPromotion, GraphNegDirect) {
 }
 
 TEST(UnaryPromotion, MathFunctionsOnCArray) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 0.5);
   auto& e = exp(x);
   auto& s = sin(x);
@@ -781,7 +782,7 @@ TEST(UnaryPromotion, MathFunctionsOnCArray) {
 }
 
 TEST(UnaryPromotion, PowFreeFunction) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 3.0);
   auto& n = pow(x, 2.0);
   EXPECT_EQ(n.op(), Op::Pow);
@@ -794,7 +795,7 @@ TEST(UnaryPromotion, PowFreeFunction) {
 // ---------------------------------------------------------------------------
 
 TEST(Leaf, GraphVariablePromotesAndNames) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> w(arena, Shape{3}, 0.5);
   VNode<double>& v = graph_variable(w);
   EXPECT_TRUE(w.requires_grad());
@@ -804,14 +805,14 @@ TEST(Leaf, GraphVariablePromotesAndNames) {
 }
 
 TEST(Leaf, GraphConstantConvenienceOverload) {
-  CArena<double> arena;
+  CArena arena;
   CNode<double>& c = graph_constant(arena, Shape{2}, 4.0);
   EXPECT_EQ(c.name(), "const_0");
   EXPECT_DOUBLE_EQ(c.data()[0], 4.0);
 }
 
 TEST(Leaf, GradOfReturnsPromotedLeafGradient) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> w(arena, Shape{2, 3}, 1.0);
   w.set_requires_grad();
   auto& y = w * w;
@@ -822,7 +823,7 @@ TEST(Leaf, GradOfReturnsPromotedLeafGradient) {
 }
 
 TEST(Leaf, ZeroGradClearsEveryNode) {
-  CArena<double> arena;
+  CArena arena;
   auto& x = graph_variable(arena, Shape{3}, 2.0);   // arena-owned leaf
   auto& y = x + x;
   x.grad().data()[0] = 5.0;
@@ -843,7 +844,7 @@ static void fill_iota(CArray<double>& a) {
 }
 
 TEST(Reduction, SumOverEverythingYieldsScalar) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);                                   // 1..6
   auto& n = sum(x);
@@ -855,7 +856,7 @@ TEST(Reduction, SumOverEverythingYieldsScalar) {
 }
 
 TEST(Reduction, SumAlongAxisDropsThatAxis) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);                                   // [[1,2,3],[4,5,6]]
 
@@ -874,7 +875,7 @@ TEST(Reduction, SumAlongAxisDropsThatAxis) {
 }
 
 TEST(Reduction, NegativeAxisIsSameAsCountingFromEnd) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);
   auto& a = sum(x, -1);
@@ -884,7 +885,7 @@ TEST(Reduction, NegativeAxisIsSameAsCountingFromEnd) {
 }
 
 TEST(Reduction, ThreeDimAxisReduction) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3, 4}, 0.0);
   fill_iota(x);                                   // element (i,j,k) = i*12 + j*4 + k + 1
   auto& n = sum(x, 1);
@@ -895,7 +896,7 @@ TEST(Reduction, ThreeDimAxisReduction) {
 }
 
 TEST(Reduction, RankOneAxisReductionYieldsScalar) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{4}, 0.0);
   fill_iota(x);                                   // 1,2,3,4
   auto& n = sum(x, 0);
@@ -904,7 +905,7 @@ TEST(Reduction, RankOneAxisReductionYieldsScalar) {
 }
 
 TEST(Reduction, MeanOverEverythingYieldsScalar) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);                                   // 1..6
   auto& n = mean(x);
@@ -916,7 +917,7 @@ TEST(Reduction, MeanOverEverythingYieldsScalar) {
 }
 
 TEST(Reduction, MeanAlongAxisDropsThatAxis) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);                                   // [[1,2,3],[4,5,6]]
 
@@ -935,7 +936,7 @@ TEST(Reduction, MeanAlongAxisDropsThatAxis) {
 }
 
 TEST(Reduction, MaxAndMinFullAndPerAxis) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   const double v[2][3] = {{3, 1, 4}, {1, 5, 9}};
   for (int64_t i = 0; i < 2; ++i)
@@ -959,7 +960,7 @@ TEST(Reduction, MaxAndMinFullAndPerAxis) {
 }
 
 TEST(Reduction, CounterBumpsPerReduction) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 1.0);
   graph_sum(&a);
   graph_mean(&a, 1);
@@ -974,7 +975,7 @@ TEST(Reduction, CounterBumpsPerReduction) {
 }
 
 TEST(Reduction, PromotesCArrayOperand) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 2.0);
   auto& n = sum(x);
   EXPECT_EQ(n.left()->mKind, autodiff::NodeKind::Constant);
@@ -988,7 +989,7 @@ TEST(Reduction, PromotesCArrayOperand) {
 }
 
 TEST(Reduction, LowLevelGraphMaxOnNode) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> a(arena, Shape{2, 3}, 0.0);
   fill_iota(a);
   ONode<double>& n = graph_max(&a, 0);
@@ -1002,7 +1003,7 @@ TEST(Reduction, LowLevelGraphMaxOnNode) {
 // ---------------------------------------------------------------------------
 
 TEST(Softmax, NormalizesWholeArrayAndKeepsShape) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);                                   // 1..6
   auto& n = softmax(x);
@@ -1019,7 +1020,7 @@ TEST(Softmax, NormalizesWholeArrayAndKeepsShape) {
 }
 
 TEST(Softmax, KnownValuesAlongLastAxis) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{3}, 0.0);
   x.data()[0] = 1.0; x.data()[1] = 2.0; x.data()[2] = 3.0;
   auto& n = softmax(x, 0);
@@ -1031,7 +1032,7 @@ TEST(Softmax, KnownValuesAlongLastAxis) {
 }
 
 TEST(Softmax, PerAxisRowsAndColumnsSumToOne) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> x(arena, Shape{2, 3}, 0.0);
   fill_iota(x);                                   // [[1,2,3],[4,5,6]]
 
@@ -1048,7 +1049,7 @@ TEST(Softmax, PerAxisRowsAndColumnsSumToOne) {
 }
 
 TEST(Softmax, StableForLargeLogitsAndUniformForEqualInputs) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> big(arena, Shape{3}, 1000.0);
   auto& n = softmax(big);
   for (int64_t i = 0; i < 3; ++i) {
@@ -1062,7 +1063,7 @@ TEST(Softmax, StableForLargeLogitsAndUniformForEqualInputs) {
 // ---------------------------------------------------------------------------
 
 TEST(CrossEntropy, MatchesNegLogProbOfLabelPerRow) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> p(arena, Shape{2, 3}, 0.0);
   const double v[2][3] = {{0.7, 0.2, 0.1}, {0.1, 0.3, 0.6}};
   for (int64_t i = 0; i < 2; ++i)
@@ -1081,7 +1082,7 @@ TEST(CrossEntropy, MatchesNegLogProbOfLabelPerRow) {
 }
 
 TEST(CrossEntropy, WholeArrayReducesToScalar) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> p(arena, Shape{3}, 0.0);
   p.data()[0] = 0.2; p.data()[1] = 0.5; p.data()[2] = 0.3;
   CArray<double> y(arena, Shape{1}, 1.0);         // one label for the whole array
@@ -1092,7 +1093,7 @@ TEST(CrossEntropy, WholeArrayReducesToScalar) {
 }
 
 TEST(CrossEntropy, ClampsZeroProbabilityToFiniteLoss) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> p(arena, Shape{2}, 0.0);         // p[label] == 0 exactly
   p.data()[0] = 0.0; p.data()[1] = 1.0;
   CArray<double> y(arena, Shape{1}, 0.0);
@@ -1106,7 +1107,7 @@ TEST(CrossEntropy, ClampsZeroProbabilityToFiniteLoss) {
 // ---------------------------------------------------------------------------
 
 TEST(SoftmaxCrossEntropy, EqualsNegLogSoftmaxOfLabel) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> z(arena, Shape{3}, 0.0);
   z.data()[0] = 1.0; z.data()[1] = 2.0; z.data()[2] = 3.0;
   CArray<double> y(arena, Shape{1}, 2.0);
@@ -1118,7 +1119,7 @@ TEST(SoftmaxCrossEntropy, EqualsNegLogSoftmaxOfLabel) {
 }
 
 TEST(SoftmaxCrossEntropy, AgreesWithCrossEntropyOfSoftmax) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> z(arena, Shape{2, 3}, 0.0);
   const double v[2][3] = {{0.5, -1.0, 2.0}, {3.0, 0.0, -0.5}};
   for (int64_t i = 0; i < 2; ++i)
@@ -1141,7 +1142,7 @@ TEST(SoftmaxCrossEntropy, AgreesWithCrossEntropyOfSoftmax) {
 }
 
 TEST(SoftmaxCrossEntropy, StableForLargeLogits) {
-  CArena<double> arena;
+  CArena arena;
   CArray<double> z(arena, Shape{3}, 0.0);
   z.data()[0] = 1000.0; z.data()[1] = 1001.0; z.data()[2] = 999.0;
   CArray<double> y(arena, Shape{1}, 1.0);
@@ -1152,7 +1153,7 @@ TEST(SoftmaxCrossEntropy, StableForLargeLogits) {
 }
 
 TEST(NeuralOps, CountersBumpPerOp) {
-  CArena<double> arena;
+  CArena arena;
   VNode<double> z(arena, Shape{2, 3}, 1.0);
   CNode<double> y(arena, Shape{2}, 0.0);
   graph_softmax(&z);
@@ -1163,6 +1164,89 @@ TEST(NeuralOps, CountersBumpPerOp) {
   EXPECT_EQ(arena.onode_softmax_count(), 2);
   EXPECT_EQ(arena.onode_cross_entropy_count(), 1);
   EXPECT_EQ(arena.onode_softmax_cross_entropy_count(), 2);
+}
+
+// ---------------------------------------------------------------------------
+//  MixedType — one arena holds many element types; binary ops promote operands
+//  to the C++ usual-arithmetic-conversion result type.
+// ---------------------------------------------------------------------------
+
+template <typename N>
+using node_value_t = typename std::remove_reference_t<N>::value_type;
+
+TEST(MixedType, FloatTimesBoolMask) {
+  CArena arena;
+  CArray<float> x(arena, Shape{2, 2}, 0.0f);
+  const float xv[2][2] = {{1, 2}, {3, 4}};
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 2; ++j) x[i, j] = xv[i][j];
+  CArray<bool> m(arena, Shape{2, 2}, false);
+  m[0, 0] = true; m[0, 1] = false; m[1, 0] = true; m[1, 1] = true;
+
+  auto& n = x * m;
+  static_assert(std::is_same_v<node_value_t<decltype(n)>, float>);
+  EXPECT_EQ(n.shape(), (Shape{2, 2}));
+  EXPECT_FLOAT_EQ((n[0, 0]), 1.0f);
+  EXPECT_FLOAT_EQ((n[0, 1]), 0.0f);
+  EXPECT_FLOAT_EQ((n[1, 0]), 3.0f);
+  EXPECT_FLOAT_EQ((n[1, 1]), 4.0f);
+}
+
+TEST(MixedType, DoubleMatmulIntMatrix) {
+  CArena arena;
+  CArray<double> d(arena, Shape{2, 3}, 0.0);
+  CArray<int>    w(arena, Shape{3, 2}, 0);
+  for (int64_t i = 0, v = 1; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j, ++v) d[i, j] = static_cast<double>(v);
+  for (int64_t i = 0, v = 1; i < 3; ++i)
+    for (int64_t j = 0; j < 2; ++j, ++v) w[i, j] = static_cast<int>(v);
+
+  auto& n = d & w;                                // [[1,2,3],[4,5,6]] * [[1,2],[3,4],[5,6]]
+  static_assert(std::is_same_v<node_value_t<decltype(n)>, double>);
+  EXPECT_EQ(n.shape(), (Shape{2, 2}));
+  EXPECT_DOUBLE_EQ((n[0, 0]), 22.0);
+  EXPECT_DOUBLE_EQ((n[0, 1]), 28.0);
+  EXPECT_DOUBLE_EQ((n[1, 0]), 49.0);
+  EXPECT_DOUBLE_EQ((n[1, 1]), 64.0);
+}
+
+TEST(MixedType, ResultIsCommonType) {
+  CArena arena;
+  CArray<float>  a(arena, Shape{1}, 1.0f);
+  CArray<double> b(arena, Shape{1}, 1e-10);
+  auto& n = a + b;
+  static_assert(std::is_same_v<node_value_t<decltype(n)>, double>);
+  EXPECT_DOUBLE_EQ(n.item(), 1.0 + 1e-10);        // double precision survived
+}
+
+TEST(MixedType, HeterogeneousGraphsShareOneArena) {
+  CArena arena;
+  CArray<float>  xf(arena, Shape{3}, 2.0f);
+  CArray<double> xd(arena, Shape{3}, 3.0);
+  auto& yf = xf + xf;
+  auto& yd = xd * xd;
+  static_assert(std::is_same_v<node_value_t<decltype(yf)>, float>);
+  static_assert(std::is_same_v<node_value_t<decltype(yd)>, double>);
+  EXPECT_FLOAT_EQ(yf.data()[0], 4.0f);
+  EXPECT_DOUBLE_EQ(yd.data()[0], 9.0);
+}
+
+TEST(MixedType, SameTypeStillMemoizesOneLeaf) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2}, 3.0);
+  auto& n = x * x;                                // no conversion — one shared leaf
+  EXPECT_EQ(n.left(), n.right());
+  EXPECT_DOUBLE_EQ(n.data()[0], 9.0);
+}
+
+TEST(MixedType, ConvertedOperandIsAConstantLeaf) {
+  CArena arena;
+  CArray<double> x(arena, Shape{2}, 5.0);
+  CArray<int>    k(arena, Shape{2}, 2);
+  auto& n = x * k;
+  EXPECT_EQ(n.right()->mKind, autodiff::NodeKind::Constant);
+  EXPECT_FALSE(n.right()->requires_grad());
+  EXPECT_DOUBLE_EQ(n.data()[0], 10.0);
 }
 
 } // namespace
