@@ -134,6 +134,22 @@ TEST(CArena, ReductionCountersIncrementIndependently) {
   EXPECT_EQ(arena.onode_min_count(), 0);
 }
 
+TEST(CArena, NeuralOpCountersIncrementIndependently) {
+  CArena<double> arena;
+  EXPECT_EQ(arena.onode_softmax_count(), 0);
+  EXPECT_EQ(arena.onode_cross_entropy_count(), 0);
+  EXPECT_EQ(arena.onode_softmax_cross_entropy_count(), 0);
+  arena.note_onode_softmax();
+  arena.note_onode_softmax();
+  arena.note_onode_cross_entropy();
+  arena.note_onode_softmax_cross_entropy();
+  arena.note_onode_softmax_cross_entropy();
+  arena.note_onode_softmax_cross_entropy();
+  EXPECT_EQ(arena.onode_softmax_count(), 2);
+  EXPECT_EQ(arena.onode_cross_entropy_count(), 1);
+  EXPECT_EQ(arena.onode_softmax_cross_entropy_count(), 3);
+}
+
 TEST(CArena, AutoRequiresGradPolicy) {
   CArena<double> arena;
   EXPECT_FALSE(arena.auto_requires_grad());

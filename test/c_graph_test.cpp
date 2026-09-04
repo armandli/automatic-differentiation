@@ -20,6 +20,7 @@ using autodiff::graph_abs;
 using autodiff::graph_add;
 using autodiff::graph_constant;
 using autodiff::graph_cos;
+using autodiff::graph_cross_entropy;
 using autodiff::graph_div;
 using autodiff::graph_dot;
 using autodiff::graph_exp;
@@ -30,6 +31,8 @@ using autodiff::graph_mean;
 using autodiff::graph_min;
 using autodiff::graph_neg;
 using autodiff::graph_pow;
+using autodiff::graph_softmax;
+using autodiff::graph_softmax_cross_entropy;
 using autodiff::graph_sum;
 using autodiff::graph_sin;
 using autodiff::graph_sqrt;
@@ -992,6 +995,174 @@ TEST(Reduction, LowLevelGraphMaxOnNode) {
   EXPECT_EQ(n.shape(), (Shape{3}));
   EXPECT_DOUBLE_EQ(n.data()[0], 4.0);
   EXPECT_DOUBLE_EQ(n.data()[2], 6.0);
+}
+
+// ---------------------------------------------------------------------------
+//  Softmax — shape-preserving normalization, whole-array and per-axis
+// ---------------------------------------------------------------------------
+
+TEST(Softmax, NormalizesWholeArrayAndKeepsShape) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                   // 1..6
+  auto& n = softmax(x);
+  EXPECT_EQ(n.op(), Op::Softmax);
+  EXPECT_EQ(n.axis(), -1);
+  EXPECT_EQ(n.right(), nullptr);
+  EXPECT_EQ(n.shape(), (Shape{2, 3}));
+  double total = 0.0;
+  for (int64_t i = 0; i < 6; ++i) {
+    EXPECT_GT(n.data()[i], 0.0);
+    total += n.data()[i];
+  }
+  EXPECT_NEAR(total, 1.0, 1e-12);
+}
+
+TEST(Softmax, KnownValuesAlongLastAxis) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{3}, 0.0);
+  x.data()[0] = 1.0; x.data()[1] = 2.0; x.data()[2] = 3.0;
+  auto& n = softmax(x, 0);
+  EXPECT_EQ(n.axis(), 0);
+  EXPECT_EQ(n.shape(), (Shape{3}));
+  EXPECT_NEAR(n.data()[0], 0.09003057317038046, 1e-12);
+  EXPECT_NEAR(n.data()[1], 0.24472847105479764, 1e-12);
+  EXPECT_NEAR(n.data()[2], 0.66524095577482200, 1e-12);
+}
+
+TEST(Softmax, PerAxisRowsAndColumnsSumToOne) {
+  CArena<double> arena;
+  CArray<double> x(arena, Shape{2, 3}, 0.0);
+  fill_iota(x);                                   // [[1,2,3],[4,5,6]]
+
+  auto& r = softmax(x, 1);                        // each row is a distribution
+  EXPECT_EQ(r.axis(), 1);
+  EXPECT_EQ(r.shape(), (Shape{2, 3}));
+  EXPECT_NEAR((r[0, 0]) + (r[0, 1]) + (r[0, 2]), 1.0, 1e-12);
+  EXPECT_NEAR((r[1, 0]) + (r[1, 1]) + (r[1, 2]), 1.0, 1e-12);
+  EXPECT_NEAR((r[0, 2]), 0.66524095577482200, 1e-12);
+
+  auto& c = softmax(x, 0);                        // each column is a distribution
+  EXPECT_NEAR((c[0, 0]) + (c[1, 0]), 1.0, 1e-12);
+  EXPECT_NEAR((c[0, 1]), 0.04742587317756678, 1e-12);
+}
+
+TEST(Softmax, StableForLargeLogitsAndUniformForEqualInputs) {
+  CArena<double> arena;
+  CArray<double> big(arena, Shape{3}, 1000.0);
+  auto& n = softmax(big);
+  for (int64_t i = 0; i < 3; ++i) {
+    EXPECT_FALSE(std::isnan(n.data()[i]));
+    EXPECT_NEAR(n.data()[i], 1.0 / 3.0, 1e-12);
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  CrossEntropy — categorical CE against integer class labels
+// ---------------------------------------------------------------------------
+
+TEST(CrossEntropy, MatchesNegLogProbOfLabelPerRow) {
+  CArena<double> arena;
+  CArray<double> p(arena, Shape{2, 3}, 0.0);
+  const double v[2][3] = {{0.7, 0.2, 0.1}, {0.1, 0.3, 0.6}};
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j) p[i, j] = v[i][j];
+  CArray<double> y(arena, Shape{2}, 0.0);
+  y.data()[0] = 0.0; y.data()[1] = 2.0;           // labels: row 0 -> class 0, row 1 -> class 2
+
+  auto& n = cross_entropy(p, y, 1);
+  EXPECT_EQ(n.op(), Op::CrossEntropy);
+  EXPECT_EQ(n.axis(), 1);
+  EXPECT_NE(n.left(), nullptr);
+  EXPECT_NE(n.right(), nullptr);
+  EXPECT_EQ(n.shape(), (Shape{2}));
+  EXPECT_NEAR(n.data()[0], -std::log(0.7), 1e-12);
+  EXPECT_NEAR(n.data()[1], -std::log(0.6), 1e-12);
+}
+
+TEST(CrossEntropy, WholeArrayReducesToScalar) {
+  CArena<double> arena;
+  CArray<double> p(arena, Shape{3}, 0.0);
+  p.data()[0] = 0.2; p.data()[1] = 0.5; p.data()[2] = 0.3;
+  CArray<double> y(arena, Shape{1}, 1.0);         // one label for the whole array
+  auto& n = cross_entropy(p, y);
+  EXPECT_EQ(n.axis(), -1);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+  EXPECT_NEAR(n.item(), -std::log(0.5), 1e-12);
+}
+
+TEST(CrossEntropy, ClampsZeroProbabilityToFiniteLoss) {
+  CArena<double> arena;
+  CArray<double> p(arena, Shape{2}, 0.0);         // p[label] == 0 exactly
+  p.data()[0] = 0.0; p.data()[1] = 1.0;
+  CArray<double> y(arena, Shape{1}, 0.0);
+  auto& n = cross_entropy(p, y);
+  EXPECT_FALSE(std::isinf(n.item()));
+  EXPECT_NEAR(n.item(), -std::log(1e-12), 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+//  SoftmaxCrossEntropy — fused, numerically stable classification loss
+// ---------------------------------------------------------------------------
+
+TEST(SoftmaxCrossEntropy, EqualsNegLogSoftmaxOfLabel) {
+  CArena<double> arena;
+  CArray<double> z(arena, Shape{3}, 0.0);
+  z.data()[0] = 1.0; z.data()[1] = 2.0; z.data()[2] = 3.0;
+  CArray<double> y(arena, Shape{1}, 2.0);
+  auto& n = softmax_cross_entropy(z, y);
+  EXPECT_EQ(n.op(), Op::SoftmaxCrossEntropy);
+  EXPECT_EQ(n.axis(), -1);
+  EXPECT_EQ(n.shape(), (Shape{1}));
+  EXPECT_NEAR(n.item(), 0.4076059644443806, 1e-12);   // -log(softmax(z)[2])
+}
+
+TEST(SoftmaxCrossEntropy, AgreesWithCrossEntropyOfSoftmax) {
+  CArena<double> arena;
+  CArray<double> z(arena, Shape{2, 3}, 0.0);
+  const double v[2][3] = {{0.5, -1.0, 2.0}, {3.0, 0.0, -0.5}};
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j) z[i, j] = v[i][j];
+  CArray<double> y(arena, Shape{2}, 0.0);
+  y.data()[0] = 2.0; y.data()[1] = 0.0;
+
+  auto& fused = softmax_cross_entropy(z, y, 1);
+  EXPECT_EQ(fused.shape(), (Shape{2}));
+
+  CArray<double> z2(arena, Shape{2, 3}, 0.0);
+  for (int64_t i = 0; i < 2; ++i)
+    for (int64_t j = 0; j < 3; ++j) z2[i, j] = v[i][j];
+  CArray<double> y2(arena, Shape{2}, 0.0);
+  y2.data()[0] = 2.0; y2.data()[1] = 0.0;
+  auto& viaSoftmax = cross_entropy(softmax(z2, 1), y2, 1);
+
+  EXPECT_NEAR(fused.data()[0], viaSoftmax.data()[0], 1e-12);
+  EXPECT_NEAR(fused.data()[1], viaSoftmax.data()[1], 1e-12);
+}
+
+TEST(SoftmaxCrossEntropy, StableForLargeLogits) {
+  CArena<double> arena;
+  CArray<double> z(arena, Shape{3}, 0.0);
+  z.data()[0] = 1000.0; z.data()[1] = 1001.0; z.data()[2] = 999.0;
+  CArray<double> y(arena, Shape{1}, 1.0);
+  auto& n = softmax_cross_entropy(z, y);
+  EXPECT_FALSE(std::isnan(n.item()));
+  EXPECT_FALSE(std::isinf(n.item()));
+  EXPECT_GT(n.item(), 0.0);
+}
+
+TEST(NeuralOps, CountersBumpPerOp) {
+  CArena<double> arena;
+  VNode<double> z(arena, Shape{2, 3}, 1.0);
+  CNode<double> y(arena, Shape{2}, 0.0);
+  graph_softmax(&z);
+  graph_softmax(&z, 1);
+  graph_cross_entropy(&z, &y, 1);
+  graph_softmax_cross_entropy(&z, &y, 1);
+  graph_softmax_cross_entropy(&z, &y, 1);
+  EXPECT_EQ(arena.onode_softmax_count(), 2);
+  EXPECT_EQ(arena.onode_cross_entropy_count(), 1);
+  EXPECT_EQ(arena.onode_softmax_cross_entropy_count(), 2);
 }
 
 } // namespace

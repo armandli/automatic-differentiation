@@ -108,6 +108,26 @@ TEST(GraphDiagram, ReductionLabelShowsAxis) {
 
   CArray<double> v(arena, Shape{2, 3}, 1.0);
   EXPECT_TRUE(contains(mermaid_of(mean(v)), "\"Mean (all)<br/>(1)\""));
+
+  CArray<double> s(arena, Shape{2, 3}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(softmax(s, 1)), "\"Softmax axis=1<br/>(2, 3)\""));
+
+  CArray<double> t(arena, Shape{2, 3}, 1.0);
+  EXPECT_TRUE(contains(mermaid_of(softmax(t)), "\"Softmax (all)<br/>(2, 3)\""));
+}
+
+TEST(GraphDiagram, CrossEntropyIsBinarySoftmaxIsUnary) {
+  CArena<double> arena;
+  CArray<double> p(arena, Shape{2, 3}, 0.3);
+  CArray<double> y(arena, Shape{2}, 0.0);
+  const std::string ce = mermaid_of(cross_entropy(p, y, 1));
+  EXPECT_TRUE(contains(ce, "\"CrossEntropy axis=1<br/>(2)\""));
+  EXPECT_EQ(count_substr(ce, "-->|L|"), 1);
+  EXPECT_EQ(count_substr(ce, "-->|R|"), 1);
+
+  CArray<double> x(arena, Shape{3}, 0.5);
+  const std::string sm = mermaid_of(softmax(x));
+  EXPECT_EQ(count_substr(sm, "-->|"), 0);          // unary: no L/R label
 }
 
 TEST(GraphDiagram, ConstantScalarShowsValue) {

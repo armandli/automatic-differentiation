@@ -21,6 +21,7 @@ namespace autodiff {
 namespace s = std;
 
 enum class Op { Add, Sub, Neg, Hadamard, Dot, Div, Sum, Max, Min, Mean,
+                Softmax, CrossEntropy, SoftmaxCrossEntropy,
                 Exp, Log, Sin, Cos, Tan, Sqrt, Abs, Pow };
 
 // ---------------------------------------------------------------------------
@@ -111,11 +112,14 @@ struct CNode : Node<T> {
 
 // ---------------------------------------------------------------------------
 //  ONode<T>: operation node — holds the result, links to its input nodes.
-//  mRight is null for unary operations (Neg, Exp, Log, Sin, reductions, ...).
-//  mAxis is the reduced axis for Sum/Max/Min/Mean (a resolved non-negative
-//  index), or -1 for a full reduction and every non-reduction op. Built by the
-//  graph_* factories into the operands' arena; the input nodes it points at are
-//  arena-owned too, so they outlive it.
+//  mRight is null for unary operations (Neg, Exp, Log, Sin, Softmax, most
+//  reductions, ...); for CrossEntropy/SoftmaxCrossEntropy it is the (constant,
+//  non-differentiable) integer class-label operand.
+//  mAxis is the resolved non-negative axis for the axis-wise ops (Sum/Max/Min/
+//  Mean/Softmax/CrossEntropy/SoftmaxCrossEntropy), or -1 for a whole-array
+//  reduction and every non-axis op. Built by the graph_* factories into the
+//  operands' arena; the input nodes it points at are arena-owned too, so they
+//  outlive it.
 // ---------------------------------------------------------------------------
 template <typename T>
 struct ONode : Node<T> {
@@ -140,6 +144,9 @@ struct ONode : Node<T> {
       case Op::Max:      arena.note_onode_max();      break;
       case Op::Min:      arena.note_onode_min();      break;
       case Op::Mean:     arena.note_onode_mean();     break;
+      case Op::Softmax:             arena.note_onode_softmax();               break;
+      case Op::CrossEntropy:        arena.note_onode_cross_entropy();         break;
+      case Op::SoftmaxCrossEntropy: arena.note_onode_softmax_cross_entropy(); break;
       case Op::Exp:      arena.note_onode_exp();      break;
       case Op::Log:      arena.note_onode_log();      break;
       case Op::Sin:      arena.note_onode_sin();      break;
@@ -229,57 +236,128 @@ ONode<T>& make_dot(CArena<T>& arena, Node<T>* a, Node<T>* b) {
   return arena.template adopt<ONode<T>>(arena, Op::Dot, s::move(result), a, b);
 }
 
-// Reduce `a` along one axis, or over every element when `axis` is absent. The
-// accumulator is seeded with the first element of each group and folded with
-// f(acc, x) over the rest, so one fold serves sum (plus), max, and min. When
-// `average` is set the fold result is divided by the group size before it is
-// stored — a plus-fold plus `average` is the mean. Output shape = input shape
-// with `axis` removed; a full reduction — or removing the last remaining axis —
-// yields Shape{1}. The resolved axis is stored on the ONode: a reverse pass
-// broadcasts the Sum grad back along it (the Mean grad likewise, scaled by
-// 1/count), and routes the Max/Min grad to each group's arg-extreme element
-// (recomputed from mLeft).
+// Split a row-major layout for an axis-wise op. When `axis` is absent the whole
+// array is one group; otherwise `axis` (negative allowed) resolves to `ax`. A
+// group has `axlen` elements, there are `outer * inner` of them, and element k of
+// group (o, j) lives at flat index (o * axlen + k) * inner + j.
+struct AxisExtents { int64_t outer, axlen, inner, ax; };  // ax = resolved axis, or -1
+
+inline AxisExtents axis_extents(const Shape& in, s::optional<int64_t> axis) {
+  const int64_t rank = static_cast<int64_t>(in.rank());
+  if (not axis) return {1, in.product(), 1, -1};
+  int64_t ax = *axis;
+  if (ax < 0) ax += rank;
+  assert(ax >= 0 and ax < rank);
+  int64_t outer = 1, inner = 1;
+  for (int64_t d = 0;      d < ax;   ++d) outer *= in[d];
+  for (int64_t d = ax + 1; d < rank; ++d) inner *= in[d];
+  return {outer, in[ax], inner, ax};
+}
+
+// Result shape of an axis-wise reduction: `in` with axis `ax` removed, or
+// Shape{1} for a whole-array reduction (ax < 0) or when removal empties it.
+inline Shape reduced_shape(const Shape& in, int64_t ax) {
+  if (ax < 0) return Shape{1};
+  s::vector<int64_t> od;
+  for (int64_t d = 0, rank = static_cast<int64_t>(in.rank()); d < rank; ++d)
+    if (d != ax) od.push_back(in[d]);
+  if (od.empty()) od.push_back(1);
+  return Shape{s::move(od)};
+}
+
+// Reduce `a` along one axis, or over every element when `axis` is absent. Each
+// group's accumulator is seeded with its first element and folded with f(acc, x)
+// over the rest, so one fold serves sum (plus), max and min. When `average` is
+// set the fold result is divided by the group size — a plus-fold plus `average`
+// is the mean. Output shape = reduced_shape(shape, ax). The resolved axis is
+// stored on the ONode: a reverse pass broadcasts the Sum grad back along it (the
+// Mean grad likewise, scaled by 1/count), and routes the Max/Min grad to each
+// group's arg-extreme element (recomputed from mLeft).
 template <typename T, typename Fold>
 ONode<T>& make_reduce(CArena<T>& arena, Op op, Node<T>* a,
                       s::optional<int64_t> axis, Fold f, bool average = false) {
   assert(a->size() >= 1);
-  const Shape& in = a->shape();
-  const int64_t rank = static_cast<int64_t>(in.rank());
+  const auto [outer, axlen, inner, ax] = axis_extents(a->shape(), axis);
   const T* pin = a->data();
-
-  if (not axis) {
-    T acc = pin[0];
-    for (s::size_t i = 1, n = a->size(); i < n; ++i)
-      acc = f(acc, pin[i]);
-    CArray<T> result(arena, Shape{1});
-    result.data()[0] = average ? acc / static_cast<T>(a->size()) : acc;
-    return arena.template adopt<ONode<T>>(arena, op, s::move(result), a, nullptr, -1);
-  }
-
-  int64_t ax = *axis;
-  if (ax < 0) ax += rank;
-  assert(ax >= 0 and ax < rank);
-
-  int64_t outer = 1, inner = 1;
-  for (int64_t d = 0;      d < ax;   ++d) outer *= in[d];
-  for (int64_t d = ax + 1; d < rank; ++d) inner *= in[d];
-  const int64_t axlen = in[ax];
-
-  s::vector<int64_t> od;
-  for (int64_t d = 0; d < rank; ++d)
-    if (d != ax) od.push_back(in[d]);
-  if (od.empty()) od.push_back(1);
-  CArray<T> result(arena, Shape{s::move(od)});
+  CArray<T> result(arena, reduced_shape(a->shape(), ax));
   T* pr = result.data();
-
   for (int64_t o = 0; o < outer; ++o)
     for (int64_t j = 0; j < inner; ++j){
-      T acc = pin[(o * axlen) * inner + j];
+      const int64_t base = o * axlen * inner + j;
+      T acc = pin[base];
       for (int64_t k = 1; k < axlen; ++k)
-        acc = f(acc, pin[(o * axlen + k) * inner + j]);
+        acc = f(acc, pin[base + k * inner]);
       pr[o * inner + j] = average ? acc / static_cast<T>(axlen) : acc;
     }
   return arena.template adopt<ONode<T>>(arena, op, s::move(result), a, nullptr, ax);
+}
+
+// softmax along `axis` (whole array when absent): exp(x - m) / sum(exp(x - m))
+// per group, with m the group max for numerical stability. Shape-preserving. The
+// resolved axis is stored on the ONode (the reverse-pass softmax Jacobian needs
+// it).
+template <typename T>
+ONode<T>& make_softmax(CArena<T>& arena, Node<T>* a, s::optional<int64_t> axis) {
+  assert(a->size() >= 1);
+  const auto [outer, axlen, inner, ax] = axis_extents(a->shape(), axis);
+  const T* pin = a->data();
+  CArray<T> result(arena, a->shape());
+  T* pr = result.data();
+  for (int64_t o = 0; o < outer; ++o)
+    for (int64_t j = 0; j < inner; ++j){
+      const int64_t base = o * axlen * inner + j;
+      T m = pin[base];
+      for (int64_t k = 1; k < axlen; ++k) m = s::max(m, pin[base + k * inner]);
+      T sum{};
+      for (int64_t k = 0; k < axlen; ++k){
+        const T e = s::exp(pin[base + k * inner] - m);
+        pr[base + k * inner] = e;
+        sum += e;
+      }
+      for (int64_t k = 0; k < axlen; ++k) pr[base + k * inner] /= sum;
+    }
+  return arena.template adopt<ONode<T>>(arena, Op::Softmax, s::move(result), a, nullptr, ax);
+}
+
+// Categorical cross-entropy of `pred` against integer class labels `target`,
+// reduced along `axis` (whole array when absent). `target` carries one class
+// index per output group (target->shape() == reduced_shape(pred->shape(), ax)),
+// read as T and rounded to the nearest integer. from_logits == false: `pred` is
+// a probability distribution and each looked-up probability is clamped to
+// [kEps, 1] before the log, so an exact zero gives a large finite loss.
+// from_logits == true: `pred` is raw logits and the numerically stable
+// logsumexp(logits) - logits[label] form is used (no clamp needed). mLeft =
+// pred, mRight = target, mAxis = ax.
+template <typename T>
+ONode<T>& make_cross_entropy(CArena<T>& arena, Op op, Node<T>* pred,
+                             Node<T>* target, s::optional<int64_t> axis,
+                             bool from_logits) {
+  assert(pred->arena() == target->arena());
+  assert(pred->size() >= 1);
+  const auto [outer, axlen, inner, ax] = axis_extents(pred->shape(), axis);
+  const Shape out = reduced_shape(pred->shape(), ax);
+  assert(target->shape() == out);
+  const T* pp = pred->data();
+  const T* pt = target->data();
+  CArray<T> result(arena, out);
+  T* pr = result.data();
+  constexpr T kEps = static_cast<T>(1e-12);
+  for (int64_t o = 0; o < outer; ++o)
+    for (int64_t j = 0; j < inner; ++j){
+      const int64_t base = o * axlen * inner + j;
+      const int64_t c = static_cast<int64_t>(s::llround(pt[o * inner + j]));
+      assert(c >= 0 and c < axlen);
+      if (from_logits){
+        T m = pp[base];
+        for (int64_t k = 1; k < axlen; ++k) m = s::max(m, pp[base + k * inner]);
+        T se{};
+        for (int64_t k = 0; k < axlen; ++k) se += s::exp(pp[base + k * inner] - m);
+        pr[o * inner + j] = (m + s::log(se)) - pp[base + c * inner];
+      } else {
+        pr[o * inner + j] = -s::log(s::clamp(pp[base + c * inner], kEps, T{1}));
+      }
+    }
+  return arena.template adopt<ONode<T>>(arena, op, s::move(result), pred, target, ax);
 }
 
 } // detail
@@ -325,6 +403,32 @@ template <typename T>
 ONode<T>& graph_min(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
   return detail::make_reduce(*a->arena(), Op::Min, a, axis,
                              [](T acc, T x){ return s::min(acc, x); });
+}
+
+// softmax(x) normalizes every element; softmax(x, k) normalizes along axis k.
+// Shape-preserving (unlike the reductions). See detail::make_softmax.
+template <typename T>
+ONode<T>& graph_softmax(Node<T>* a, s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_softmax(*a->arena(), a, axis);
+}
+
+// Cross-entropy against integer class labels, reduced along `axis` (whole array
+// when absent). `pred` is a probability distribution (clamped away from 0 before
+// the log); `logits` for graph_softmax_cross_entropy is raw and handled with a
+// stable fused logsumexp. `target` holds one class index per output group. See
+// detail::make_cross_entropy.
+template <typename T>
+ONode<T>& graph_cross_entropy(Node<T>* pred, Node<T>* target,
+                              s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_cross_entropy(*pred->arena(), Op::CrossEntropy,
+                                    pred, target, axis, /*from_logits=*/false);
+}
+
+template <typename T>
+ONode<T>& graph_softmax_cross_entropy(Node<T>* logits, Node<T>* target,
+                                      s::optional<int64_t> axis = s::nullopt) {
+  return detail::make_cross_entropy(*logits->arena(), Op::SoftmaxCrossEntropy,
+                                    logits, target, axis, /*from_logits=*/true);
 }
 
 // Element-wise (Hadamard) product; shapes must match (or one be a scalar).
@@ -548,6 +652,35 @@ AUTODIFF_GRAPH_REDUCE(max,  graph_max)
 AUTODIFF_GRAPH_REDUCE(min,  graph_min)
 
 #undef AUTODIFF_GRAPH_REDUCE
+
+// ---------------------------------------------------------------------------
+//  Neural-net ops on a Node or CArray operand, ADL-resolved like the reductions:
+//    softmax(x)       / softmax(x, k)                — normalize, shape-preserving
+//    cross_entropy(p, y)         / cross_entropy(p, y, k)
+//    softmax_cross_entropy(z, y) / softmax_cross_entropy(z, y, k)
+//  `y` is an integer class-label tensor shaped like the axis-reduced result.
+// ---------------------------------------------------------------------------
+template <typename A>
+  requires detail::is_graph_operand<A>
+auto& softmax(A&& a, s::optional<int64_t> axis = s::nullopt) {
+  using T = typename s::remove_cvref_t<A>::value_type;
+  return graph_softmax(&detail::to_node<T>(*a.arena(), s::forward<A>(a)), axis);
+}
+
+#define AUTODIFF_GRAPH_BINOP_AXIS(NAME, FN)                                       \
+  template <typename A, typename B>                                               \
+    requires (detail::is_graph_operand<A> or detail::is_graph_operand<B>)         \
+  auto& NAME(A&& a, B&& b, s::optional<int64_t> axis = s::nullopt) {              \
+    using T = detail::graph_value_t<A, B>;                                        \
+    CArena<T>& ar = detail::pick_arena<T>(a, b);                                  \
+    return FN(&detail::to_node<T>(ar, s::forward<A>(a)),                          \
+             &detail::to_node<T>(ar, s::forward<B>(b)), axis);                    \
+  }
+
+AUTODIFF_GRAPH_BINOP_AXIS(cross_entropy,         graph_cross_entropy)
+AUTODIFF_GRAPH_BINOP_AXIS(softmax_cross_entropy, graph_softmax_cross_entropy)
+
+#undef AUTODIFF_GRAPH_BINOP_AXIS
 
 // ---------------------------------------------------------------------------
 //  Explicit leaf factories and gradient access.

@@ -44,6 +44,9 @@ inline const char* op_name(Op op) {
     case Op::Max:      return "Max";
     case Op::Min:      return "Min";
     case Op::Mean:     return "Mean";
+    case Op::Softmax:             return "Softmax";
+    case Op::CrossEntropy:        return "CrossEntropy";
+    case Op::SoftmaxCrossEntropy: return "SoftmaxCrossEntropy";
     case Op::Exp:      return "Exp";
     case Op::Log:      return "Log";
     case Op::Sin:      return "Sin";
@@ -115,7 +118,8 @@ struct mermaid_writer {
         const ONode<T>& o = static_cast<const ONode<T>&>(n);
         out << "{{\"" << op_name(o.op());
         if (o.op() == Op::Sum or o.op() == Op::Max or o.op() == Op::Min or
-            o.op() == Op::Mean) {
+            o.op() == Op::Mean or o.op() == Op::Softmax or
+            o.op() == Op::CrossEntropy or o.op() == Op::SoftmaxCrossEntropy) {
           if (o.axis() >= 0) out << " axis=" << o.axis();
           else               out << " (all)";
         }

@@ -118,6 +118,9 @@ struct CArena {
   void note_onode_max()      noexcept { ++mOnodeMaxCount; }
   void note_onode_min()      noexcept { ++mOnodeMinCount; }
   void note_onode_mean()     noexcept { ++mOnodeMeanCount; }
+  void note_onode_softmax()               noexcept { ++mOnodeSoftmaxCount; }
+  void note_onode_cross_entropy()         noexcept { ++mOnodeCrossEntropyCount; }
+  void note_onode_softmax_cross_entropy() noexcept { ++mOnodeSoftmaxCrossEntropyCount; }
   void note_onode_exp()      noexcept { ++mOnodeExpCount; }
   void note_onode_log()      noexcept { ++mOnodeLogCount; }
   void note_onode_sin()      noexcept { ++mOnodeSinCount; }
@@ -140,6 +143,9 @@ struct CArena {
   int64_t onode_max_count()      const noexcept { return mOnodeMaxCount; }
   int64_t onode_min_count()      const noexcept { return mOnodeMinCount; }
   int64_t onode_mean_count()     const noexcept { return mOnodeMeanCount; }
+  int64_t onode_softmax_count()               const noexcept { return mOnodeSoftmaxCount; }
+  int64_t onode_cross_entropy_count()         const noexcept { return mOnodeCrossEntropyCount; }
+  int64_t onode_softmax_cross_entropy_count() const noexcept { return mOnodeSoftmaxCrossEntropyCount; }
   int64_t onode_exp_count()      const noexcept { return mOnodeExpCount; }
   int64_t onode_log_count()      const noexcept { return mOnodeLogCount; }
   int64_t onode_sin_count()      const noexcept { return mOnodeSinCount; }
@@ -167,6 +173,9 @@ private:
   int64_t mOnodeMaxCount      = 0;
   int64_t mOnodeMinCount      = 0;
   int64_t mOnodeMeanCount     = 0;
+  int64_t mOnodeSoftmaxCount             = 0;
+  int64_t mOnodeCrossEntropyCount        = 0;
+  int64_t mOnodeSoftmaxCrossEntropyCount = 0;
   int64_t mOnodeExpCount      = 0;
   int64_t mOnodeLogCount      = 0;
   int64_t mOnodeSinCount      = 0;
