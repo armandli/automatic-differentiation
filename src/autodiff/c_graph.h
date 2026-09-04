@@ -58,6 +58,12 @@ protected:
     : NodeBase(k), CArray<T>(s::move(data)), mGrad(arena, CArray<T>::shape(), T{}) {}
 };
 
+// One input-gradient contribution produced by ONode<T>::backward: the input node
+// to route it to, plus a freshly-allocated gradient buffer the caller owns.
+// Defined out of line in dreverse_ad.h along with the backward() members below.
+template <typename T>
+using GradList = s::vector<s::pair<Node<T>*, CArray<T>>>;
+
 // ---------------------------------------------------------------------------
 //  VNode<T>: variable node — participates in gradient computation.
 // ---------------------------------------------------------------------------
@@ -83,6 +89,10 @@ struct VNode : Node<T> {
     this->set_requires_grad(true);
     this->mName = "var_" + s::to_string(arena.note_vnode());
   }
+
+  // Reverse pass: store the incoming adjoint as this variable's gradient.
+  // Defined in dreverse_ad.h.
+  void backward(const CArray<T>& adjoint);
 };
 
 // ---------------------------------------------------------------------------
@@ -108,6 +118,10 @@ struct CNode : Node<T> {
     this->set_requires_grad(false);
     this->mName = "const_" + s::to_string(arena.note_cnode());
   }
+
+  // Reverse pass: a constant has no gradient, so the adjoint is discarded.
+  // Defined in dreverse_ad.h.
+  void backward(const CArray<T>& adjoint);
 };
 
 // ---------------------------------------------------------------------------
@@ -170,6 +184,13 @@ struct ONode : Node<T> {
   Node<T>* right() const noexcept { return mRight; }
   int64_t  axis()  const noexcept { return mAxis; }
   Node<T>* cond()  const noexcept { return mCond; }
+
+  // Reverse pass: given the adjoint flowing in from downstream, return one
+  // (input node, gradient) pair per differentiable input. No entry is produced
+  // for mCond, nor for mRight of CrossEntropy/SoftmaxCrossEntropy (class
+  // labels). Every returned buffer is freshly allocated. Defined in
+  // dreverse_ad.h — one gradient rule per Op.
+  GradList<T> backward(const CArray<T>& adjoint);
 };
 
 // ---------------------------------------------------------------------------
